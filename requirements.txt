@@ -1,0 +1,24 @@
+# Core Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# WebSocket Support  
+websockets==12.0
+
+# Data Validation
+pydantic==2.5.0
+
+# Hardware Detection
+psutil==5.9.6
+
+# HTTP Client (for webhooks)
+aiohttp==3.9.1
+
+# Configuration
+python-dotenv==1.0.0
+pyyaml==6.0.1
+
+# Testing dependencies
+httpx==0.25.2  # Required for FastAPI TestClient
+pytest==7.4.3
+pytest-asyncio==0.21.1
