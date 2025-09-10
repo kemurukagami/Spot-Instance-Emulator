@@ -44,18 +44,18 @@ async def interrupt_callback(warning_time: int, reason: str):
     await send_interruption_notice(status.instance_id, warning_time, reason)
 
 async def termination_callback():
-    """Handle instance termination"""
-    logger.info("Instance termination callback triggered - shutting down")
-    status.state = "terminated"
+    """Handle instance unassignment (worker stays alive)"""
+    logger.info("Instance unassignment callback triggered - clearing instance assignment")
     
-    # Give a moment for final logging
-    await asyncio.sleep(0.5)
+    # Update status to reflect instance termination but worker continues
+    status.instance_id = None
+    status.instance_type = None
+    status.state = "unassigned"
+    status.interruption_time = None
     
-    # Terminate the process
-    logger.info("Instance node terminated due to spot interruption")
-    os._exit(0)
+    logger.info("Worker returned to unassigned state, ready for new instance assignment")
 
-async def start_websocket_client(head_node_url: str, instance_id: str, instance_type: str):
+async def start_websocket_client(head_node_url: str, worker_id: str):
     """Start WebSocket connection to head node"""
     global ws_client
     
@@ -63,15 +63,16 @@ async def start_websocket_client(head_node_url: str, instance_id: str, instance_
     hardware_detector = HardwareDetector()
     hardware_profile = hardware_detector.detect_hardware()
     
-    # Update status
-    status.instance_id = instance_id
-    status.instance_type = instance_type
+    # Update status to worker-based (no instance assigned initially)
+    status.instance_id = None  # Will be assigned by head node
+    status.instance_type = None
+    status.worker_id = worker_id
     status.hardware = hardware_profile.dict()
+    status.state = "unassigned"
     
     # Create and start WebSocket client
     ws_client = WebSocketClient(
-        instance_id=instance_id,
-        instance_type=instance_type,
+        worker_id=worker_id,
         hardware_profile=hardware_profile.dict(),
         head_node_url=head_node_url,
         interrupt_callback=interrupt_callback,
@@ -85,8 +86,10 @@ async def startup_event():
     """Start WebSocket client on app startup"""
     # Get configuration from environment or defaults
     head_node_url = os.getenv("HEAD_NODE_URL", "ws://localhost:8000/ws")
-    instance_id = os.getenv("INSTANCE_ID", f"i-{uuid.uuid4().hex[:12]}")
-    instance_type = os.getenv("INSTANCE_TYPE", "t2.micro")
+    
+    # Generate worker ID from machine characteristics
+    hardware_detector = HardwareDetector()
+    worker_id = hardware_detector.generate_worker_id()
     
     # Configure webhook if provided
     webhook_url = os.getenv("WEBHOOK_URL")
@@ -95,11 +98,11 @@ async def startup_event():
         webhook_config.enabled = True
         logger.info(f"Webhook configured: {webhook_url}")
     
-    logger.info(f"Starting instance node: {instance_id}")
+    logger.info(f"Starting worker node: {worker_id}")
     logger.info(f"Connecting to head node: {head_node_url}")
     
     # Start WebSocket client in background
-    asyncio.create_task(start_websocket_client(head_node_url, instance_id, instance_type))
+    asyncio.create_task(start_websocket_client(head_node_url, worker_id))
 
 @app.on_event("shutdown")
 async def shutdown_event():

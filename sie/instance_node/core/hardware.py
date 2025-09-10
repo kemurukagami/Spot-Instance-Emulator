@@ -1,6 +1,8 @@
 import psutil
 import platform
 import subprocess
+import socket
+import hashlib
 from typing import List, Optional
 from sie.instance_node.models import HardwareProfile, CPUInfo, GPUInfo
 import logging
@@ -75,3 +77,32 @@ class HardwareDetector:
         """Get storage in GB"""
         disk = psutil.disk_usage('/')
         return int(disk.total / (1024 * 1024 * 1024))
+    
+    @staticmethod
+    def generate_worker_id() -> str:
+        """Generate a unique worker ID based on machine characteristics"""
+        try:
+            # Use hostname as primary identifier
+            hostname = socket.gethostname()
+            
+            # Get MAC addresses for additional uniqueness
+            mac_addresses = []
+            for interface, addrs in psutil.net_if_addrs().items():
+                for addr in addrs:
+                    if addr.family == psutil.AF_LINK and addr.address and addr.address != "00:00:00:00:00:00":
+                        mac_addresses.append(addr.address)
+            
+            # Create unique string from hostname + first MAC
+            unique_str = hostname
+            if mac_addresses:
+                unique_str += "-" + mac_addresses[0].replace(":", "")
+            
+            # Hash to create shorter, consistent ID
+            worker_hash = hashlib.md5(unique_str.encode()).hexdigest()[:8]
+            
+            return f"worker-{hostname}-{worker_hash}"
+            
+        except Exception as e:
+            logger.warning(f"Could not generate worker ID from hardware: {e}")
+            # Fallback to hostname only
+            return f"worker-{socket.gethostname()}-unknown"

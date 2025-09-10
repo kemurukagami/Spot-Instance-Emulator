@@ -5,6 +5,7 @@ import sys
 from sie.head_node.core import PoolManager
 from sie.head_node.api import ConnectionManager, admin_router
 from sie.head_node.api.admin import managers
+from sie.common.constants import get_primary_ip
 
 # Configure logging
 logging.basicConfig(
@@ -49,5 +50,18 @@ async def websocket_endpoint(websocket: WebSocket):
 if __name__ == "__main__":
     host = "0.0.0.0"
     port = 8000
-    logger.info(f"Starting Head Node on {host}:{port}")
+    primary_ip = get_primary_ip()
+    
+    logger.info(f"Starting Head Node")
+    logger.info(f"Binding to: {host}:{port}")
+    logger.info(f"External IP: {primary_ip}:{port}")
+    logger.info(f"")
+    logger.info(f"WebSocket endpoint: ws://{primary_ip}:{port}/ws")
+    logger.info(f"Admin API: http://{primary_ip}:{port}/admin/")
+    logger.info(f"Interactive docs: http://{primary_ip}:{port}/docs")
+    logger.info(f"")
+    logger.info(f"For other machines to connect:")
+    logger.info(f"  export HEAD_NODE_URL='ws://{primary_ip}:{port}/ws'")
+    logger.info(f"  python run_instance.py --head-node ws://{primary_ip}:{port}/ws")
+    
     uvicorn.run(app, host=host, port=port)

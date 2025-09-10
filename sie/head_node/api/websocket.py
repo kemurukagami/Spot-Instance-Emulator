@@ -6,10 +6,10 @@ from datetime import datetime
 import logging
 from sie.common.messages import (
     RegisterMessage, HeartbeatMessage, InterruptMessage, 
-    AcknowledgeMessage, StatusMessage
+    AcknowledgeMessage, StatusMessage, AssignInstanceMessage, UnassignInstanceMessage
 )
-from sie.common.constants import MessageType, InstanceState
-from sie.head_node.models import Instance
+from sie.common.constants import MessageType, InstanceState, ConnectionState
+from sie.head_node.models.instance import WorkerConnection, Instance
 from sie.head_node.core import PoolManager
 
 logger = logging.getLogger(__name__)
@@ -31,10 +31,10 @@ class ConnectionManager:
         """Handle WebSocket disconnection"""
         if connection_id in self.active_connections:
             del self.active_connections[connection_id]
-            # Find and unregister associated instance
-            for instance_id, ws_id in list(self.pool_manager.instance_to_ws.items()):
+            # Find and unregister associated worker
+            for worker_id, ws_id in list(self.pool_manager.worker_to_ws.items()):
                 if ws_id == connection_id:
-                    self.pool_manager.unregister_instance(instance_id)
+                    self.pool_manager.unregister_worker(worker_id)
             logger.info(f"WebSocket disconnected: {connection_id}")
             
     async def send_message(self, connection_id: str, message: dict):
@@ -46,11 +46,17 @@ class ConnectionManager:
             json_str = json.dumps(message, default=str)
             await websocket.send_text(json_str)
             
-    async def send_to_instance(self, instance_id: str, message: dict):
-        """Send message to specific instance"""
-        ws_id = self.pool_manager.get_websocket_id(instance_id)
+    async def send_to_worker(self, worker_id: str, message: dict):
+        """Send message to specific worker"""
+        ws_id = self.pool_manager.get_websocket_id(worker_id)
         if ws_id:
             await self.send_message(ws_id, message)
+            
+    async def send_to_instance(self, instance_id: str, message: dict):
+        """Send message to instance (find worker first)"""
+        instance = self.pool_manager.get_instance(instance_id)
+        if instance:
+            await self.send_to_worker(instance.worker_id, message)
             
     async def broadcast(self, message: dict):
         """Broadcast message to all connections"""
@@ -64,28 +70,32 @@ class ConnectionManager:
             
             if msg_type == MessageType.REGISTER:
                 msg = RegisterMessage(**data)
-                instance = Instance(
-                    instance_id=msg.instance_id,
-                    instance_type=msg.instance_type,
-                    hardware=msg.hardware
+                worker = WorkerConnection(
+                    worker_id=msg.worker_id,
+                    hardware=msg.hardware,
+                    connection_state=ConnectionState.UNASSIGNED
                 )
-                self.pool_manager.register_instance(instance, connection_id)
+                self.pool_manager.register_worker(worker, connection_id)
                 
                 # Send acknowledgment
                 ack = AcknowledgeMessage(
-                    instance_id=msg.instance_id,
+                    instance_id="N/A",  # No instance assigned yet
                     original_message_type=MessageType.REGISTER
                 )
                 await self.send_message(connection_id, ack.dict())
-                logger.info(f"Registered instance: {msg.instance_id}")
+                logger.info(f"Registered worker: {msg.worker_id}")
                 
             elif msg_type == MessageType.HEARTBEAT:
                 msg = HeartbeatMessage(**data)
-                success = self.pool_manager.update_heartbeat(msg.instance_id)
+                success = self.pool_manager.update_worker_heartbeat(
+                    msg.worker_id, 
+                    msg.connection_state,
+                    msg.instance_id
+                )
                 if success:
                     # Send acknowledgment
                     ack = AcknowledgeMessage(
-                        instance_id=msg.instance_id,
+                        instance_id=msg.instance_id or "N/A",
                         original_message_type=MessageType.HEARTBEAT
                     )
                     await self.send_message(connection_id, ack.dict())
@@ -99,6 +109,40 @@ class ConnectionManager:
         except Exception as e:
             logger.error(f"Error handling message: {e}")
             
+    async def assign_instance(self, worker_id: str, instance_type: str) -> str:
+        """Assign an instance ID to a worker"""
+        instance_id = self.pool_manager.assign_instance(worker_id, instance_type)
+        if instance_id:
+            # Send assignment message to worker
+            msg = AssignInstanceMessage(
+                worker_id=worker_id,
+                instance_id=instance_id,
+                instance_type=instance_type
+            )
+            await self.send_to_worker(worker_id, msg.dict())
+            logger.info(f"Assigned instance {instance_id} to worker {worker_id}")
+            return instance_id
+        return None
+        
+    async def unassign_instance(self, instance_id: str) -> bool:
+        """Unassign an instance and return worker to unassigned state"""
+        instance = self.pool_manager.get_instance(instance_id)
+        if not instance:
+            return False
+            
+        worker_id = instance.worker_id
+        success = self.pool_manager.unassign_instance(instance_id)
+        if success:
+            # Send unassignment message to worker
+            msg = UnassignInstanceMessage(
+                instance_id=instance_id,
+                worker_id=worker_id
+            )
+            await self.send_to_worker(worker_id, msg.dict())
+            logger.info(f"Unassigned instance {instance_id} from worker {worker_id}")
+            return True
+        return False
+        
     async def trigger_interruption(self, instance_id: str, warning_time: int = 120):
         """Send interruption message to instance"""
         success = self.pool_manager.mark_for_interruption(instance_id, warning_time)
@@ -109,5 +153,15 @@ class ConnectionManager:
             )
             await self.send_to_instance(instance_id, msg.dict())
             logger.info(f"Sent interruption to instance: {instance_id}")
+            
+            # Schedule automatic unassignment after warning time
+            import asyncio
+            asyncio.create_task(self._schedule_unassignment(instance_id, warning_time))
             return True
         return False
+        
+    async def _schedule_unassignment(self, instance_id: str, warning_time: int):
+        """Schedule automatic unassignment after warning time"""
+        await asyncio.sleep(warning_time)
+        await self.unassign_instance(instance_id)
+        logger.info(f"Automatically unassigned instance {instance_id} after {warning_time}s")

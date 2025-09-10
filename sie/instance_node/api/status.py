@@ -6,9 +6,10 @@ from sie.common.constants import InstanceState
 router = APIRouter(prefix="/instance", tags=["instance"])
 
 class InstanceStatus:
-    instance_id: str = None
+    worker_id: str = None  # Physical machine identifier
+    instance_id: str = None  # Will be None when unassigned
     instance_type: str = None
-    state: InstanceState = InstanceState.PENDING
+    state: str = "unassigned"  # unassigned, assigned, interrupted
     hardware: dict = {}
     interruption_time: Optional[datetime] = None
     
@@ -16,11 +17,12 @@ status = InstanceStatus()
 
 @router.get("/status")
 async def get_status() -> Dict[str, Any]:
-    """Get current instance status"""
+    """Get current worker/instance status"""
     return {
-        "instance_id": status.instance_id,
+        "worker_id": status.worker_id,
+        "instance_id": status.instance_id,  # May be None when unassigned
         "instance_type": status.instance_type,
-        "state": status.state,
+        "state": status.state,  # unassigned, assigned, interrupted
         "hardware": status.hardware
     }
 
