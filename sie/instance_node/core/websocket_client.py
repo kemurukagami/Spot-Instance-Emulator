@@ -15,12 +15,14 @@ logger = logging.getLogger(__name__)
 class WebSocketClient:
     def __init__(self, worker_id: str, hardware_profile: dict, 
                  head_node_url: str, interrupt_callback: Optional[Callable] = None,
-                 termination_callback: Optional[Callable] = None):
+                 termination_callback: Optional[Callable] = None,
+                 shutdown_callback: Optional[Callable] = None):
         self.worker_id = worker_id
         self.hardware_profile = hardware_profile
         self.head_node_url = head_node_url
         self.interrupt_callback = interrupt_callback
-        self.termination_callback = termination_callback
+        self.termination_callback = termination_callback  # For instance unassignment
+        self.shutdown_callback = shutdown_callback  # For full process shutdown
         self.websocket = None
         self.connection_state = ConnectionState.UNASSIGNED
         self.instance_id: Optional[str] = None  # Will be assigned by head node
@@ -79,10 +81,18 @@ class WebSocketClient:
                 data = json.loads(message)
                 await self._handle_message(data)
             except websockets.exceptions.ConnectionClosed:
-                logger.warning("Connection closed by head node")
+                logger.warning("Connection closed by head node - shutting down gracefully")
+                self.running = False
+                # Trigger full process shutdown when connection is lost
+                if self.shutdown_callback:
+                    await self.shutdown_callback()
                 break
             except Exception as e:
                 logger.error(f"Receive error: {e}")
+                self.running = False
+                # If there's a persistent error, shutdown gracefully
+                if self.shutdown_callback:
+                    await self.shutdown_callback()
                 break
                 
     async def _handle_message(self, data: dict):

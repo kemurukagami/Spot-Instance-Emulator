@@ -55,6 +55,17 @@ async def termination_callback():
     
     logger.info("Worker returned to unassigned state, ready for new instance assignment")
 
+async def shutdown_callback():
+    """Handle full process shutdown when connection to head node is lost"""
+    logger.info("Connection to head node lost - shutting down worker process")
+    
+    # Give a moment for final logging
+    await asyncio.sleep(0.5)
+    
+    # Terminate the entire process
+    logger.info("Worker process terminated due to head node disconnection")
+    os._exit(0)
+
 async def start_websocket_client(head_node_url: str, worker_id: str):
     """Start WebSocket connection to head node"""
     global ws_client
@@ -76,7 +87,8 @@ async def start_websocket_client(head_node_url: str, worker_id: str):
         hardware_profile=hardware_profile.dict(),
         head_node_url=head_node_url,
         interrupt_callback=interrupt_callback,
-        termination_callback=termination_callback
+        termination_callback=termination_callback,
+        shutdown_callback=shutdown_callback
     )
     
     await ws_client.connect()

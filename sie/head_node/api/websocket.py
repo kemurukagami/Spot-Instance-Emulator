@@ -1,6 +1,7 @@
 from fastapi import WebSocket, WebSocketDisconnect
 import json
 import uuid
+import asyncio
 from typing import Dict
 from datetime import datetime
 import logging
@@ -155,7 +156,6 @@ class ConnectionManager:
             logger.info(f"Sent interruption to instance: {instance_id}")
             
             # Schedule automatic unassignment after warning time
-            import asyncio
             asyncio.create_task(self._schedule_unassignment(instance_id, warning_time))
             return True
         return False
