@@ -23,6 +23,14 @@ class PoolManager:
     def register_worker(self, worker: WorkerConnection, websocket_id: str) -> None:
         """Register a new worker connection"""
         worker.websocket_id = websocket_id
+        
+        # Try to get worker IP from websocket connection info
+        if websocket_id in self.websocket_connections:
+            connection_info = self.websocket_connections[websocket_id]
+            if isinstance(connection_info, dict) and 'client_ip' in connection_info:
+                worker.worker_ip = connection_info['client_ip']
+                logger.info(f"Worker {worker.worker_id} IP: {worker.worker_ip}")
+        
         self.workers[worker.worker_id] = worker
         self.worker_to_ws[worker.worker_id] = websocket_id
         logger.info(f"Registered worker {worker.worker_id} in {worker.connection_state.value} state")

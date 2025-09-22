@@ -7,7 +7,8 @@ from datetime import datetime
 import logging
 from sie.common.messages import (
     RegisterMessage, HeartbeatMessage, InterruptMessage, 
-    AcknowledgeMessage, StatusMessage, AssignInstanceMessage, UnassignInstanceMessage
+    AcknowledgeMessage, StatusMessage, AssignInstanceMessage, UnassignInstanceMessage,
+    CreateUserMessage, DeleteUserMessage
 )
 from sie.common.constants import MessageType, InstanceState, ConnectionState
 from sie.head_node.models.instance import WorkerConnection, Instance
@@ -25,8 +26,35 @@ class ConnectionManager:
         await websocket.accept()
         connection_id = str(uuid.uuid4())
         self.active_connections[connection_id] = websocket
-        logger.info(f"WebSocket connected: {connection_id}")
+        
+        # Try to get client IP address
+        client_ip = self._get_client_ip(websocket)
+        self.pool_manager.websocket_connections[connection_id] = {
+            'websocket': websocket,
+            'client_ip': client_ip
+        }
+        
+        logger.info(f"WebSocket connected: {connection_id} from IP: {client_ip}")
         return connection_id
+    
+    def _get_client_ip(self, websocket: WebSocket) -> str:
+        """Extract client IP address from WebSocket connection"""
+        try:
+            # Try to get the real client IP
+            if hasattr(websocket, 'client') and websocket.client:
+                return websocket.client.host
+            
+            # Fallback to headers if behind proxy
+            headers = getattr(websocket, 'headers', {})
+            if 'x-forwarded-for' in headers:
+                return headers['x-forwarded-for'].split(',')[0].strip()
+            if 'x-real-ip' in headers:
+                return headers['x-real-ip']
+                
+        except Exception as e:
+            logger.warning(f"Could not extract client IP: {e}")
+        
+        return "unknown"
         
     def disconnect(self, connection_id: str):
         """Handle WebSocket disconnection"""
@@ -165,3 +193,24 @@ class ConnectionManager:
         await asyncio.sleep(warning_time)
         await self.unassign_instance(instance_id)
         logger.info(f"Automatically unassigned instance {instance_id} after {warning_time}s")
+    
+    async def create_user_on_worker(self, worker_id: str, username: str, ssh_public_key: str, assignment_id: str) -> bool:
+        """Send message to worker to create a system user"""
+        msg = CreateUserMessage(
+            username=username,
+            ssh_public_key=ssh_public_key,
+            assignment_id=assignment_id
+        )
+        await self.send_to_worker(worker_id, msg.dict())
+        logger.info(f"Sent user creation request for {username} to worker {worker_id}")
+        return True
+    
+    async def delete_user_on_worker(self, worker_id: str, username: str, assignment_id: str) -> bool:
+        """Send message to worker to delete a system user"""
+        msg = DeleteUserMessage(
+            username=username,
+            assignment_id=assignment_id
+        )
+        await self.send_to_worker(worker_id, msg.dict())
+        logger.info(f"Sent user deletion request for {username} to worker {worker_id}")
+        return True

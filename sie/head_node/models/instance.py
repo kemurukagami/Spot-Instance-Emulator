@@ -11,6 +11,7 @@ class WorkerConnection(BaseModel):
     connected_at: datetime = Field(default_factory=datetime.utcnow)
     last_heartbeat: datetime = Field(default_factory=datetime.utcnow)
     websocket_id: Optional[str] = None
+    worker_ip: Optional[str] = None  # IP address for SSH access
     
 class Instance(BaseModel):
     """Represents a spot instance assignment on a worker"""

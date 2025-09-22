@@ -3,8 +3,10 @@ import uvicorn
 import logging
 import sys
 from sie.head_node.core import PoolManager
+from sie.head_node.core.user_manager import UserManager
 from sie.head_node.api import ConnectionManager, admin_router
 from sie.head_node.api.admin import managers
+from sie.head_node.api import auth, instances
 from sie.common.constants import get_primary_ip
 
 # Configure logging
@@ -19,14 +21,23 @@ app = FastAPI(title="Spot Instance Emulator - Head Node")
 
 # Initialize managers
 pool_manager = PoolManager()
+user_manager = UserManager()
 connection_manager = ConnectionManager(pool_manager)
 
 # Store managers for admin API
 managers.pool_manager = pool_manager
 managers.connection_manager = connection_manager
 
-# Include admin router
+# Store managers for auth API
+auth.user_manager = user_manager
+instances.user_manager = user_manager
+instances.pool_manager = pool_manager
+instances.connection_manager = connection_manager
+
+# Include routers
 app.include_router(admin_router)
+app.include_router(auth.router)
+app.include_router(instances.router)
 
 @app.get("/")
 async def root():

@@ -22,6 +22,8 @@ class MessageType(str, Enum):
     ACKNOWLEDGE = "acknowledge"
     ASSIGN_INSTANCE = "assign_instance"
     UNASSIGN_INSTANCE = "unassign_instance"
+    CREATE_USER = "create_user"
+    DELETE_USER = "delete_user"
     ERROR = "error"
 
 DEFAULT_WARNING_TIME = 120  # seconds (2 minutes)

@@ -31,6 +31,7 @@ async def get_workers() -> List[Dict[str, Any]]:
         {
             "worker_id": worker.worker_id,
             "connection_state": worker.connection_state,
+            "worker_ip": worker.worker_ip,
             "hardware": worker.hardware,
             "connected_at": worker.connected_at.isoformat(),
             "last_heartbeat": worker.last_heartbeat.isoformat(),
@@ -64,6 +65,7 @@ async def get_unassigned_workers() -> List[Dict[str, Any]]:
     return [
         {
             "worker_id": worker.worker_id,
+            "worker_ip": worker.worker_ip,
             "hardware": worker.hardware,
             "connected_at": worker.connected_at.isoformat(),
             "last_heartbeat": worker.last_heartbeat.isoformat()

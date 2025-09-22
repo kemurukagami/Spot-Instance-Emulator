@@ -46,3 +46,14 @@ class UnassignInstanceMessage(BaseMessage):
     type: MessageType = MessageType.UNASSIGN_INSTANCE
     instance_id: str
     worker_id: str
+
+class CreateUserMessage(BaseMessage):
+    type: MessageType = MessageType.CREATE_USER
+    username: str
+    ssh_public_key: str
+    assignment_id: str
+    
+class DeleteUserMessage(BaseMessage):
+    type: MessageType = MessageType.DELETE_USER
+    username: str
+    assignment_id: str

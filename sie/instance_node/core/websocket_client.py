@@ -6,7 +6,8 @@ from typing import Optional, Callable
 from datetime import datetime
 from sie.common.messages import (
     RegisterMessage, HeartbeatMessage, InterruptMessage,
-    AcknowledgeMessage, StatusMessage, AssignInstanceMessage, UnassignInstanceMessage
+    AcknowledgeMessage, StatusMessage, AssignInstanceMessage, UnassignInstanceMessage,
+    CreateUserMessage, DeleteUserMessage
 )
 from sie.common.constants import MessageType, InstanceState, ConnectionState, HEARTBEAT_INTERVAL
 
@@ -16,13 +17,15 @@ class WebSocketClient:
     def __init__(self, worker_id: str, hardware_profile: dict, 
                  head_node_url: str, interrupt_callback: Optional[Callable] = None,
                  termination_callback: Optional[Callable] = None,
-                 shutdown_callback: Optional[Callable] = None):
+                 shutdown_callback: Optional[Callable] = None,
+                 user_manager: Optional[object] = None):
         self.worker_id = worker_id
         self.hardware_profile = hardware_profile
         self.head_node_url = head_node_url
         self.interrupt_callback = interrupt_callback
         self.termination_callback = termination_callback  # For instance unassignment
         self.shutdown_callback = shutdown_callback  # For full process shutdown
+        self.user_manager = user_manager  # For managing system users
         self.websocket = None
         self.connection_state = ConnectionState.UNASSIGNED
         self.instance_id: Optional[str] = None  # Will be assigned by head node
@@ -127,6 +130,37 @@ class WebSocketClient:
                 self.instance_id = None
                 self.instance_type = None
                 self.connection_state = ConnectionState.UNASSIGNED
+        
+        elif msg_type == MessageType.CREATE_USER:
+            msg = CreateUserMessage(**data)
+            logger.info(f"Received request to create user {msg.username}")
+            if self.user_manager:
+                success = await self.user_manager.create_user(
+                    msg.username, 
+                    msg.ssh_public_key, 
+                    msg.assignment_id
+                )
+                if success:
+                    logger.info(f"Successfully created user {msg.username}")
+                else:
+                    logger.error(f"Failed to create user {msg.username}")
+            else:
+                logger.warning("User manager not available")
+        
+        elif msg_type == MessageType.DELETE_USER:
+            msg = DeleteUserMessage(**data)
+            logger.info(f"Received request to delete user {msg.username}")
+            if self.user_manager:
+                success = await self.user_manager.delete_user(
+                    msg.username, 
+                    msg.assignment_id
+                )
+                if success:
+                    logger.info(f"Successfully deleted user {msg.username}")
+                else:
+                    logger.error(f"Failed to delete user {msg.username}")
+            else:
+                logger.warning("User manager not available")
             
         elif msg_type == MessageType.ACKNOWLEDGE:
             msg = AcknowledgeMessage(**data)

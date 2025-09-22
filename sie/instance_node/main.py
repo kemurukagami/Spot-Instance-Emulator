@@ -7,6 +7,7 @@ import sys
 import os
 from datetime import datetime, timedelta
 from sie.instance_node.core import HardwareDetector, WebSocketClient
+from sie.instance_node.core.user_manager import UserManager
 from sie.instance_node.api import status_router, webhook_router, send_interruption_notice
 from sie.instance_node.api.status import status
 from sie.instance_node.api.webhook import webhook_config
@@ -25,8 +26,9 @@ app = FastAPI(title="Spot Instance Emulator - Instance Node")
 app.include_router(status_router)
 app.include_router(webhook_router)
 
-# Global WebSocket client
+# Global WebSocket client and user manager
 ws_client = None
+user_manager = None
 
 @app.get("/")
 async def root():
@@ -68,7 +70,11 @@ async def shutdown_callback():
 
 async def start_websocket_client(head_node_url: str, worker_id: str):
     """Start WebSocket connection to head node"""
-    global ws_client
+    global ws_client, user_manager
+    
+    # Initialize user manager
+    user_manager = UserManager()
+    await user_manager.setup_environment()
     
     # Detect hardware
     hardware_detector = HardwareDetector()
@@ -88,7 +94,8 @@ async def start_websocket_client(head_node_url: str, worker_id: str):
         head_node_url=head_node_url,
         interrupt_callback=interrupt_callback,
         termination_callback=termination_callback,
-        shutdown_callback=shutdown_callback
+        shutdown_callback=shutdown_callback,
+        user_manager=user_manager
     )
     
     await ws_client.connect()

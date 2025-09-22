@@ -80,29 +80,22 @@ class HardwareDetector:
     
     @staticmethod
     def generate_worker_id() -> str:
-        """Generate a unique worker ID based on machine characteristics"""
+        """Generate a secure worker ID without exposing hardware identifiers"""
         try:
-            # Use hostname as primary identifier
+            import secrets
+            
+            # Use hostname as primary identifier (safe to expose)
             hostname = socket.gethostname()
             
-            # Get MAC addresses for additional uniqueness
-            mac_addresses = []
-            for interface, addrs in psutil.net_if_addrs().items():
-                for addr in addrs:
-                    if addr.family == psutil.AF_LINK and addr.address and addr.address != "00:00:00:00:00:00":
-                        mac_addresses.append(addr.address)
+            # Use cryptographically secure random instead of MAC address
+            # This prevents device fingerprinting and tracking
+            secure_suffix = secrets.token_hex(8)
             
-            # Create unique string from hostname + first MAC
-            unique_str = hostname
-            if mac_addresses:
-                unique_str += "-" + mac_addresses[0].replace(":", "")
-            
-            # Hash to create shorter, consistent ID
-            worker_hash = hashlib.md5(unique_str.encode()).hexdigest()[:8]
-            
-            return f"worker-{hostname}-{worker_hash}"
+            return f"worker-{hostname}-{secure_suffix}"
             
         except Exception as e:
-            logger.warning(f"Could not generate worker ID from hardware: {e}")
-            # Fallback to hostname only
-            return f"worker-{socket.gethostname()}-unknown"
+            logger.warning(f"Could not generate worker ID: {e}")
+            # Fallback with timestamp-based ID
+            import time
+            timestamp_hash = hashlib.md5(str(time.time()).encode()).hexdigest()[:8]
+            return f"worker-{socket.gethostname()}-{timestamp_hash}"
