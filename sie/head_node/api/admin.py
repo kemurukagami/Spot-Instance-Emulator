@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from sie.head_node.core import PoolManager
 from sie.head_node.api.websocket import ConnectionManager
@@ -17,11 +17,12 @@ class AssignInstanceRequest(BaseModel):
 class UnassignInstanceRequest(BaseModel):
     instance_id: str
 
-class PoolManager_ConnectionManager:
+class Managers:
     pool_manager: PoolManager = None
     connection_manager: ConnectionManager = None
+    simulation_controller: Optional[Any] = None  # Will be set from main.py
 
-managers = PoolManager_ConnectionManager()
+managers = Managers()
 
 @router.get("/workers")
 async def get_workers() -> List[Dict[str, Any]]:
@@ -143,7 +144,7 @@ async def health_check() -> Dict[str, Any]:
     total_workers = len(managers.pool_manager.get_all_workers())
     total_instances = len(managers.pool_manager.get_all_instances())
     unassigned_workers = len(managers.pool_manager.get_unassigned_workers())
-    
+
     return {
         "total_workers": total_workers,
         "unhealthy_workers": unhealthy_workers,
@@ -151,4 +152,143 @@ async def health_check() -> Dict[str, Any]:
         "total_instances": total_instances,
         "unassigned_workers": unassigned_workers,
         "assigned_workers": total_instances  # Same as instances since 1:1 mapping
+    }
+
+# Trace simulation endpoints
+@router.get("/simulation/status")
+async def get_simulation_status() -> Dict[str, Any]:
+    """Get current simulation status"""
+    if not managers.simulation_controller:
+        return {"error": "Trace simulation not enabled"}
+
+    return managers.simulation_controller.get_simulation_status()
+
+@router.post("/simulation/pause")
+async def pause_simulation() -> Dict[str, str]:
+    """Pause trace simulation"""
+    if not managers.simulation_controller:
+        raise HTTPException(status_code=400, detail="Trace simulation not enabled")
+
+    await managers.simulation_controller.pause_simulation()
+    return {"status": "success", "message": "Simulation paused"}
+
+@router.post("/simulation/resume")
+async def resume_simulation() -> Dict[str, str]:
+    """Resume trace simulation"""
+    if not managers.simulation_controller:
+        raise HTTPException(status_code=400, detail="Trace simulation not enabled")
+
+    await managers.simulation_controller.resume_simulation()
+    return {"status": "success", "message": "Simulation resumed"}
+
+class SeekRequest(BaseModel):
+    time_ms: int
+
+@router.post("/simulation/seek")
+async def seek_simulation(request: SeekRequest) -> Dict[str, str]:
+    """Seek to specific time in trace"""
+    if not managers.simulation_controller:
+        raise HTTPException(status_code=400, detail="Trace simulation not enabled")
+
+    await managers.simulation_controller.seek_to_time(request.time_ms)
+    return {"status": "success", "message": f"Seeked to time {request.time_ms}ms"}
+
+class SpeedRequest(BaseModel):
+    speed: float
+
+@router.post("/simulation/speed")
+async def set_simulation_speed(request: SpeedRequest) -> Dict[str, str]:
+    """Set simulation speed"""
+    if not managers.simulation_controller:
+        raise HTTPException(status_code=400, detail="Trace simulation not enabled")
+
+    managers.simulation_controller.set_simulation_speed(request.speed)
+    return {"status": "success", "message": f"Set simulation speed to {request.speed}x"}
+
+@router.get("/spot-instances/available")
+async def get_available_spot_instances() -> List[Dict[str, Any]]:
+    """Get all available (unassigned) spot instances"""
+    if not managers.simulation_controller:
+        return []
+
+    spot_instances = managers.pool_manager.get_available_spot_instances()
+    return [
+        {
+            "spot_instance_id": spot.spot_instance_id,
+            "instance_type": spot.instance_type,
+            "available_since": spot.available_since.isoformat(),
+            "is_assigned": spot.is_assigned
+        }
+        for spot in spot_instances
+    ]
+
+@router.get("/spot-instances/assigned")
+async def get_assigned_spot_instances() -> List[Dict[str, Any]]:
+    """Get all assigned spot instances"""
+    if not managers.simulation_controller:
+        return []
+
+    spot_instances = managers.pool_manager.get_assigned_spot_instances()
+    return [
+        {
+            "spot_instance_id": spot.spot_instance_id,
+            "instance_type": spot.instance_type,
+            "available_since": spot.available_since.isoformat(),
+            "assigned_worker_id": spot.assigned_worker_id,
+            "is_assigned": spot.is_assigned
+        }
+        for spot in spot_instances
+    ]
+
+@router.get("/trace-events/upcoming")
+async def get_upcoming_trace_events() -> List[Dict[str, Any]]:
+    """Get upcoming trace events"""
+    if not managers.simulation_controller:
+        return []
+
+    events = managers.simulation_controller.get_upcoming_events(count=20)
+    return [
+        {
+            "timestamp_ms": event.timestamp_ms,
+            "action": event.action,
+            "node_id": event.node_id
+        }
+        for event in events
+    ]
+
+class AssignSpotInstanceRequest(BaseModel):
+    worker_id: str
+    instance_type: Optional[str] = None
+
+@router.post("/assign-spot-instance")
+async def assign_spot_instance(request: AssignSpotInstanceRequest) -> Dict[str, Any]:
+    """Assign a spot instance to a worker (trace-based)"""
+    if not managers.simulation_controller:
+        # Fall back to regular assignment
+        instance_id = await managers.connection_manager.assign_instance(
+            request.worker_id,
+            request.instance_type or "unknown"
+        )
+        if not instance_id:
+            raise HTTPException(status_code=400, detail="Failed to assign instance")
+        return {
+            "status": "success",
+            "instance_id": instance_id,
+            "worker_id": request.worker_id,
+            "message": f"Assigned regular instance {instance_id} to worker {request.worker_id}"
+        }
+
+    spot_instance_id = managers.pool_manager.assign_spot_instance(
+        request.worker_id,
+        request.instance_type
+    )
+    if not spot_instance_id:
+        raise HTTPException(status_code=400, detail="No available spot instances matching criteria")
+
+    return {
+        "status": "success",
+        "spot_instance_id": spot_instance_id,
+        "worker_id": request.worker_id,
+        "instance_type": request.instance_type,
+        "message": f"Assigned spot instance {spot_instance_id} to worker {request.worker_id}"
     }

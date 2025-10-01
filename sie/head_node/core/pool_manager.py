@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 import asyncio
 import uuid
 from sie.head_node.models.instance import Instance, WorkerConnection
+from sie.head_node.models.trace import TraceSimulator, AvailableSpotInstance
 from sie.common.constants import InstanceState, ConnectionState, HEARTBEAT_TIMEOUT
 import logging
 
@@ -14,10 +15,14 @@ class PoolManager:
         self.workers: Dict[str, WorkerConnection] = {}  # worker_id -> WorkerConnection
         self.websocket_connections: Dict[str, any] = {}  # websocket_id -> connection
         self.worker_to_ws: Dict[str, str] = {}  # worker_id -> websocket_id
-        
+
         # Track instance assignments (dynamic, can be created/destroyed)
         self.instances: Dict[str, Instance] = {}  # instance_id -> Instance
         self.worker_to_instance: Dict[str, str] = {}  # worker_id -> instance_id
+
+        # Trace-based spot instance simulation
+        self.trace_simulator: Optional[TraceSimulator] = None
+        self.spot_instance_to_worker: Dict[str, str] = {}  # spot_instance_id -> worker_id
         
     # Worker connection management
     def register_worker(self, worker: WorkerConnection, websocket_id: str) -> None:
@@ -171,3 +176,152 @@ class PoolManager:
     def get_websocket_id(self, worker_id: str) -> Optional[str]:
         """Get WebSocket connection ID for a worker"""
         return self.worker_to_ws.get(worker_id)
+
+    # Trace-based spot instance management
+    def set_trace_simulator(self, trace_simulator: TraceSimulator) -> None:
+        """Set the trace simulator for spot instance management"""
+        self.trace_simulator = trace_simulator
+        logger.info("Trace simulator enabled for spot instance management")
+
+    def add_spot_instance(self, spot_instance_id: str, instance_type: str) -> None:
+        """Add a new spot instance from trace (becomes available for assignment)"""
+        if self.trace_simulator is None:
+            logger.warning("Cannot add spot instance: trace simulator not enabled")
+            return
+
+        spot_instance = AvailableSpotInstance(
+            spot_instance_id=spot_instance_id,
+            instance_type=instance_type
+        )
+        self.trace_simulator.available_spot_instances[spot_instance_id] = spot_instance
+        logger.info(f"Added spot instance {spot_instance_id} ({instance_type}) to available pool")
+
+    def remove_spot_instance(self, spot_instance_id: str) -> Optional[str]:
+        """
+        Remove spot instance from trace (becomes unavailable, auto-unassign if needed)
+
+        Returns:
+            worker_id that was unassigned, or None if instance wasn't assigned
+        """
+        if self.trace_simulator is None:
+            logger.warning("Cannot remove spot instance: trace simulator not enabled")
+            return None
+
+        if spot_instance_id not in self.trace_simulator.available_spot_instances:
+            logger.warning(f"Cannot remove spot instance {spot_instance_id}: not found")
+            return None
+
+        spot_instance = self.trace_simulator.available_spot_instances[spot_instance_id]
+        unassigned_worker = None
+
+        # If spot instance is assigned to a worker, unassign it
+        if spot_instance.is_assigned:
+            worker_id = spot_instance.assigned_worker_id
+            self._unassign_spot_instance_from_worker(spot_instance_id, worker_id)
+            unassigned_worker = worker_id
+            logger.info(f"Auto-unassigned worker {worker_id} due to spot instance {spot_instance_id} removal")
+
+        # Remove from available pool
+        del self.trace_simulator.available_spot_instances[spot_instance_id]
+        logger.info(f"Removed spot instance {spot_instance_id} from available pool")
+
+        return unassigned_worker
+
+    def assign_spot_instance(self, worker_id: str, instance_type: Optional[str] = None) -> Optional[str]:
+        """
+        Assign an available spot instance to a worker
+
+        Args:
+            worker_id: ID of the worker to assign to
+            instance_type: Preferred instance type (if None, assigns any available)
+
+        Returns:
+            The assigned spot instance ID, or None if assignment failed
+        """
+        if self.trace_simulator is None:
+            # Fall back to legacy assignment if no trace simulator
+            return self.assign_instance(worker_id, instance_type or "unknown")
+
+        if worker_id not in self.workers:
+            logger.error(f"Cannot assign spot instance: worker {worker_id} not found")
+            return None
+
+        worker = self.workers[worker_id]
+        if worker.connection_state != ConnectionState.UNASSIGNED:
+            logger.error(f"Cannot assign spot instance: worker {worker_id} is not unassigned (state: {worker.connection_state})")
+            return None
+
+        # Find available spot instance
+        available_spots = self.trace_simulator.get_unassigned_spot_instances()
+        if instance_type:
+            available_spots = [s for s in available_spots if s.instance_type == instance_type]
+
+        if not available_spots:
+            logger.warning(f"No available spot instances for assignment (requested type: {instance_type})")
+            return None
+
+        # Assign the first available spot instance
+        spot_instance = available_spots[0]
+        spot_instance.assigned_worker_id = worker_id
+        self.spot_instance_to_worker[spot_instance.spot_instance_id] = worker_id
+
+        # Create traditional instance record for backward compatibility
+        instance_id = f"i-{uuid.uuid4().hex[:8]}"
+        instance = Instance(
+            instance_id=instance_id,
+            instance_type=spot_instance.instance_type,
+            worker_id=worker_id,
+            state=InstanceState.RUNNING
+        )
+
+        # Update tracking
+        self.instances[instance_id] = instance
+        self.worker_to_instance[worker_id] = instance_id
+        worker.connection_state = ConnectionState.ASSIGNED
+
+        logger.info(f"Assigned spot instance {spot_instance.spot_instance_id} ({spot_instance.instance_type}) to worker {worker_id} as instance {instance_id}")
+        return spot_instance.spot_instance_id
+
+    def _unassign_spot_instance_from_worker(self, spot_instance_id: str, worker_id: str) -> bool:
+        """Internal method to unassign a spot instance from a worker"""
+        if worker_id not in self.workers:
+            logger.error(f"Cannot unassign: worker {worker_id} not found")
+            return False
+
+        # Find and remove instance record
+        instance_id = self.worker_to_instance.get(worker_id)
+        if instance_id and instance_id in self.instances:
+            del self.instances[instance_id]
+
+        # Clean up tracking
+        if worker_id in self.worker_to_instance:
+            del self.worker_to_instance[worker_id]
+        if spot_instance_id in self.spot_instance_to_worker:
+            del self.spot_instance_to_worker[spot_instance_id]
+
+        # Update spot instance state
+        if self.trace_simulator and spot_instance_id in self.trace_simulator.available_spot_instances:
+            self.trace_simulator.available_spot_instances[spot_instance_id].assigned_worker_id = None
+
+        # Return worker to unassigned state
+        self.workers[worker_id].connection_state = ConnectionState.UNASSIGNED
+
+        return True
+
+    def get_available_spot_instances(self) -> List[AvailableSpotInstance]:
+        """Get all unassigned spot instances"""
+        if self.trace_simulator is None:
+            return []
+        return self.trace_simulator.get_unassigned_spot_instances()
+
+    def get_assigned_spot_instances(self) -> List[AvailableSpotInstance]:
+        """Get all assigned spot instances"""
+        if self.trace_simulator is None:
+            return []
+        return self.trace_simulator.get_assigned_spot_instances()
+
+    def get_spot_instance_for_worker(self, worker_id: str) -> Optional[AvailableSpotInstance]:
+        """Get spot instance assigned to a specific worker"""
+        if self.trace_simulator is None:
+            return None
+        return self.trace_simulator.get_spot_instance_by_worker(worker_id)
