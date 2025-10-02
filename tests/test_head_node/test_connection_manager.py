@@ -39,7 +39,7 @@ class TestConnectionManager(unittest.TestCase):
         connection_id = await self.connection_manager.connect(self.mock_websocket)
         
         # Register an instance with this connection
-        from sie.head_node.models import Instance
+        from sie.head_node.core.instance import Instance
         instance = Instance(
             instance_id="i-test123",
             instance_type="t2.micro",
@@ -80,7 +80,7 @@ class TestConnectionManager(unittest.TestCase):
         connection_id = await self.connection_manager.connect(self.mock_websocket)
         
         # Register an instance
-        from sie.head_node.models import Instance
+        from sie.head_node.core.instance import Instance
         instance = Instance(
             instance_id="i-test123",
             instance_type="t2.micro",
@@ -153,7 +153,7 @@ class TestConnectionManager(unittest.TestCase):
         connection_id = await self.connection_manager.connect(self.mock_websocket)
         
         # First register an instance
-        from sie.head_node.models import Instance
+        from sie.head_node.core.instance import Instance
         instance = Instance(
             instance_id="i-test123",
             instance_type="t2.micro",
@@ -185,7 +185,7 @@ class TestConnectionManager(unittest.TestCase):
         connection_id = await self.connection_manager.connect(self.mock_websocket)
         
         # First register an instance
-        from sie.head_node.models import Instance
+        from sie.head_node.core.instance import Instance
         instance = Instance(
             instance_id="i-test123",
             instance_type="t2.micro",
@@ -215,7 +215,7 @@ class TestConnectionManager(unittest.TestCase):
         connection_id = await self.connection_manager.connect(self.mock_websocket)
         
         # Register an instance
-        from sie.head_node.models import Instance
+        from sie.head_node.core.instance import Instance
         instance = Instance(
             instance_id="i-test123",
             instance_type="t2.micro",

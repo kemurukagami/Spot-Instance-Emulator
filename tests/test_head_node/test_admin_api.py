@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from sie.head_node.api.admin import router, managers, InterruptRequest
 from sie.head_node.core import PoolManager
 from sie.head_node.api.websocket import ConnectionManager
-from sie.head_node.models import Instance
+from sie.head_node.core.instance import Instance
 from sie.common.constants import InstanceState
 from datetime import datetime
 

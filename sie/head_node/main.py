@@ -63,8 +63,8 @@ def set_trace_file(trace_file: str, simulation_speed: float = 1.0, instance_type
         for warning in warnings:
             logger.warning(f"Trace validation: {warning}")
 
-        # Create simulation controller
-        simulation_controller = SimulationController(pool_manager, trace_simulator)
+        # Create simulation controller with connection_manager for sending interruption warnings
+        simulation_controller = SimulationController(pool_manager, trace_simulator, connection_manager)
 
         # Set up callbacks for real-time visualization updates
         simulation_controller.on_spot_instance_added = on_spot_instance_added
@@ -196,7 +196,7 @@ async def send_visualization_update(websocket: WebSocket) -> None:
         for worker in workers:
             worker_info = {
                 "worker_id": worker.worker_id,
-                "connection_state": worker.connection_state,
+                "connection_state": worker.connection_state.value,  # Explicitly get enum value
                 "hardware": worker.hardware,
                 "connected_at": worker.connected_at.isoformat(),
                 "last_heartbeat": worker.last_heartbeat.isoformat(),

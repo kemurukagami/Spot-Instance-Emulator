@@ -2,7 +2,7 @@ import csv
 import logging
 from pathlib import Path
 from typing import List, Dict, Optional
-from sie.head_node.models.trace import TraceEvent, TraceAction, TraceSimulator, AvailableSpotInstance
+from sie.head_node.core.trace import TraceEvent, TraceAction, TraceSimulator, AvailableSpotInstance
 
 logger = logging.getLogger(__name__)
 

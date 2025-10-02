@@ -2,18 +2,20 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Optional, Callable, List
-from sie.head_node.models.trace import TraceSimulator, TraceEvent, TraceAction
+from sie.head_node.core.trace import TraceSimulator, TraceEvent, TraceAction
 from sie.head_node.core.pool_manager import PoolManager
 from sie.head_node.core.trace_parser import parse_instance_type_from_filename
+from sie.common.messages import InterruptMessage, UnassignInstanceMessage
 
 logger = logging.getLogger(__name__)
 
 class SimulationController:
     """Controls trace playback and manages simulation timing"""
 
-    def __init__(self, pool_manager: PoolManager, trace_simulator: TraceSimulator):
+    def __init__(self, pool_manager: PoolManager, trace_simulator: TraceSimulator, connection_manager=None):
         self.pool_manager = pool_manager
         self.trace_simulator = trace_simulator
+        self.connection_manager = connection_manager  # For sending interruption warnings
         self.simulation_task: Optional[asyncio.Task] = None
         self.is_running = False
 
@@ -173,18 +175,72 @@ class SimulationController:
         # Notify external listeners
         if self.on_spot_instance_added:
             try:
-                self.on_spot_instance_added(event.node_id, instance_type)
+                await self.on_spot_instance_added(event.node_id, instance_type)
             except Exception as e:
                 logger.error(f"Error in spot instance added callback: {e}")
 
     async def _handle_remove_event(self, event: TraceEvent) -> None:
-        """Handle REMOVE event - make spot instance unavailable, auto-unassign"""
+        """Handle REMOVE event - send 2-min warning, then unassign after grace period"""
+        # Check if this spot instance is assigned to a worker
+        spot_instance = self.pool_manager.trace_simulator.available_spot_instances.get(event.node_id)
+
+        if spot_instance and spot_instance.is_assigned:
+            worker_id = spot_instance.assigned_worker_id
+            instance = self.pool_manager.get_instance_for_worker(worker_id)
+
+            if instance and self.connection_manager:
+                # Send 2-minute interruption warning
+                grace_period_sim = 120  # 2 minutes in simulation time
+                grace_period_real = grace_period_sim / self.trace_simulator.simulation_speed
+
+                logger.info(f"Sending spot termination warning for {event.node_id} to worker {worker_id} (grace: {grace_period_real:.1f}s real / {grace_period_sim}s sim)")
+                msg = InterruptMessage(
+                    instance_id=instance.instance_id,
+                    warning_time=grace_period_sim,
+                    simulation_speed=self.trace_simulator.simulation_speed
+                )
+                await self.connection_manager.send_to_worker(worker_id, msg.dict())
+
+                # Update worker state to INTERRUPTED
+                self.pool_manager.mark_for_interruption(instance.instance_id, warning_time=grace_period_sim)
+
+                # Schedule unassignment after grace period (simulation-adjusted)
+                asyncio.create_task(self._delayed_unassignment(event.node_id, worker_id, instance.instance_id, grace_period_sim))
+                logger.info(f"Worker {worker_id} has {grace_period_real:.1f}s real-time ({grace_period_sim}s sim-time) to clean up")
+                return  # Don't remove spot instance yet
+
+        # Remove spot instance from pool if not assigned
         unassigned_worker = self.pool_manager.remove_spot_instance(event.node_id)
 
-        # Notify external listeners
+        # Notify external listeners (for visualization)
         if self.on_spot_instance_removed:
             try:
-                self.on_spot_instance_removed(event.node_id, unassigned_worker)
+                await self.on_spot_instance_removed(event.node_id, unassigned_worker)
+            except Exception as e:
+                logger.error(f"Error in spot instance removed callback: {e}")
+
+    async def _delayed_unassignment(self, spot_instance_id: str, worker_id: str, instance_id: str, delay: int) -> None:
+        """Unassign worker after grace period (adjusted for simulation speed)"""
+        # Adjust delay for simulation speed: real_time = sim_time / speed
+        real_delay = delay / self.trace_simulator.simulation_speed
+        logger.info(f"Waiting {real_delay:.1f}s real-time ({delay}s sim-time at {self.trace_simulator.simulation_speed}x speed)")
+
+        await asyncio.sleep(real_delay)
+
+        logger.info(f"Grace period ended, unassigning worker {worker_id} from spot instance {spot_instance_id}")
+
+        # Send unassignment message to worker
+        if self.connection_manager:
+            msg = UnassignInstanceMessage(instance_id=instance_id, worker_id=worker_id)
+            await self.connection_manager.send_to_worker(worker_id, msg.dict())
+
+        # Remove spot instance from pool
+        self.pool_manager.remove_spot_instance(spot_instance_id)
+
+        # Notify visualization
+        if self.on_spot_instance_removed:
+            try:
+                await self.on_spot_instance_removed(spot_instance_id, worker_id)
             except Exception as e:
                 logger.error(f"Error in spot instance removed callback: {e}")
 

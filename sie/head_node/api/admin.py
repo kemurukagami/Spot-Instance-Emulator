@@ -31,11 +31,11 @@ async def get_workers() -> List[Dict[str, Any]]:
     return [
         {
             "worker_id": worker.worker_id,
-            "connection_state": worker.connection_state,
+            "connection_state": worker.connection_state.value,  # Explicitly get enum value
             "hardware": worker.hardware,
             "connected_at": worker.connected_at.isoformat(),
             "last_heartbeat": worker.last_heartbeat.isoformat(),
-            "assigned_instance": managers.pool_manager.get_instance_for_worker(worker.worker_id).instance_id 
+            "assigned_instance": managers.pool_manager.get_instance_for_worker(worker.worker_id).instance_id
                                if managers.pool_manager.get_instance_for_worker(worker.worker_id) else None
         }
         for worker in workers
@@ -50,7 +50,7 @@ async def get_instances() -> List[Dict[str, Any]]:
             "instance_id": inst.instance_id,
             "instance_type": inst.instance_type,
             "worker_id": inst.worker_id,
-            "state": inst.state,
+            "state": inst.state.value,  # Explicitly get enum value
             "assigned_at": inst.assigned_at.isoformat(),
             "last_heartbeat": inst.last_heartbeat.isoformat(),
             "interruption_time": inst.interruption_time.isoformat() if inst.interruption_time else None
@@ -78,15 +78,15 @@ async def get_instance(instance_id: str) -> Dict[str, Any]:
     instance = managers.pool_manager.get_instance(instance_id)
     if not instance:
         raise HTTPException(status_code=404, detail="Instance not found")
-    
+
     # Get worker info too
     worker = managers.pool_manager.get_worker(instance.worker_id)
-    
+
     return {
         "instance_id": instance.instance_id,
         "instance_type": instance.instance_type,
         "worker_id": instance.worker_id,
-        "state": instance.state,
+        "state": instance.state.value,  # Explicitly get enum value
         "assigned_at": instance.assigned_at.isoformat(),
         "last_heartbeat": instance.last_heartbeat.isoformat(),
         "interruption_time": instance.interruption_time.isoformat() if instance.interruption_time else None,
@@ -278,7 +278,8 @@ async def assign_spot_instance(request: AssignSpotInstanceRequest) -> Dict[str, 
             "message": f"Assigned regular instance {instance_id} to worker {request.worker_id}"
         }
 
-    spot_instance_id = managers.pool_manager.assign_spot_instance(
+    # Use connection_manager to send WebSocket message to worker
+    spot_instance_id = await managers.connection_manager.assign_spot_instance(
         request.worker_id,
         request.instance_type
     )

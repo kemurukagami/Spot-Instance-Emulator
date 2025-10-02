@@ -2,8 +2,9 @@ from typing import Dict, Optional, List
 from datetime import datetime, timedelta
 import asyncio
 import uuid
-from sie.head_node.models.instance import Instance, WorkerConnection
-from sie.head_node.models.trace import TraceSimulator, AvailableSpotInstance
+import random
+from sie.head_node.core.instance import Instance, WorkerConnection
+from sie.head_node.core.trace import TraceSimulator, AvailableSpotInstance
 from sie.common.constants import InstanceState, ConnectionState, HEARTBEAT_TIMEOUT
 import logging
 
@@ -256,14 +257,31 @@ class PoolManager:
         if instance_type:
             available_spots = [s for s in available_spots if s.instance_type == instance_type]
 
+        # Filter out instances with less than 2 minutes remaining
+        MIN_LIFETIME_MS = 120000  # 2 minutes in simulation time
+        available_spots = self._filter_by_remaining_lifetime(available_spots, MIN_LIFETIME_MS)
+
         if not available_spots:
-            logger.warning(f"No available spot instances for assignment (requested type: {instance_type})")
+            logger.warning(f"No available spot instances with sufficient lifetime (requested type: {instance_type}, min lifetime: {MIN_LIFETIME_MS/1000}s)")
             return None
 
-        # Assign the first available spot instance
-        spot_instance = available_spots[0]
+        # Randomly assign one of the available spot instances
+        spot_instance = random.choice(available_spots)
         spot_instance.assigned_worker_id = worker_id
         self.spot_instance_to_worker[spot_instance.spot_instance_id] = worker_id
+
+        # Calculate remaining lifetime for logging
+        remaining_lifetime_str = "unknown"
+        if self.trace_simulator and self.trace_simulator.events:
+            current_time = self.trace_simulator.current_time_ms
+            for event in self.trace_simulator.events:
+                if (event.node_id == spot_instance.spot_instance_id and
+                    event.action.value == "remove" and
+                    event.timestamp_ms > current_time):
+                    remaining_sim = (event.timestamp_ms - current_time) / 1000
+                    remaining_real = remaining_sim / self.trace_simulator.simulation_speed
+                    remaining_lifetime_str = f"{remaining_sim:.1f}s sim ({remaining_real:.1f}s real)"
+                    break
 
         # Create traditional instance record for backward compatibility
         instance_id = f"i-{uuid.uuid4().hex[:8]}"
@@ -279,8 +297,51 @@ class PoolManager:
         self.worker_to_instance[worker_id] = instance_id
         worker.connection_state = ConnectionState.ASSIGNED
 
-        logger.info(f"Assigned spot instance {spot_instance.spot_instance_id} ({spot_instance.instance_type}) to worker {worker_id} as instance {instance_id}")
+        logger.info(f"Assigned spot instance {spot_instance.spot_instance_id} ({spot_instance.instance_type}) to worker {worker_id} as instance {instance_id} (lifetime remaining: {remaining_lifetime_str})")
         return spot_instance.spot_instance_id
+
+    def _filter_by_remaining_lifetime(self, spot_instances: List[AvailableSpotInstance], min_lifetime_ms: int) -> List[AvailableSpotInstance]:
+        """
+        Filter spot instances to only include those with sufficient remaining lifetime.
+
+        Args:
+            spot_instances: List of spot instances to filter
+            min_lifetime_ms: Minimum required lifetime in milliseconds (simulation time)
+
+        Returns:
+            List of spot instances with at least min_lifetime_ms remaining
+        """
+        if not self.trace_simulator or not self.trace_simulator.events:
+            return spot_instances
+
+        current_time = self.trace_simulator.current_time_ms
+        filtered = []
+
+        for spot in spot_instances:
+            # Find the next REMOVE event for this spot instance
+            removal_time = None
+            for event in self.trace_simulator.events:
+                if (event.node_id == spot.spot_instance_id and
+                    event.action.value == "remove" and
+                    event.timestamp_ms > current_time):
+                    removal_time = event.timestamp_ms
+                    break
+
+            # If no removal event found, instance lives forever (keep it)
+            if removal_time is None:
+                filtered.append(spot)
+                logger.debug(f"Spot instance {spot.spot_instance_id} has no scheduled removal (keeping)")
+                continue
+
+            # Check if instance has sufficient lifetime remaining
+            remaining_lifetime = removal_time - current_time
+            if remaining_lifetime >= min_lifetime_ms:
+                filtered.append(spot)
+                logger.debug(f"Spot instance {spot.spot_instance_id} has {remaining_lifetime/1000:.1f}s remaining (keeping)")
+            else:
+                logger.debug(f"Spot instance {spot.spot_instance_id} only has {remaining_lifetime/1000:.1f}s remaining (filtering out, min required: {min_lifetime_ms/1000:.1f}s)")
+
+        return filtered
 
     def _unassign_spot_instance_from_worker(self, spot_instance_id: str, worker_id: str) -> bool:
         """Internal method to unassign a spot instance from a worker"""

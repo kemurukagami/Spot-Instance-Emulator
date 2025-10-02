@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import Mock, patch, MagicMock
 import subprocess
 from sie.instance_node.core.hardware import HardwareDetector
-from sie.instance_node.models import HardwareProfile, CPUInfo, GPUInfo
+from sie.instance_node.core.hardware_schema import HardwareProfile, CPUInfo, GPUInfo
 
 
 class TestHardwareDetector(unittest.TestCase):

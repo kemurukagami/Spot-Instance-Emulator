@@ -10,7 +10,7 @@ from sie.common.messages import (
     AcknowledgeMessage, StatusMessage, AssignInstanceMessage, UnassignInstanceMessage
 )
 from sie.common.constants import MessageType, InstanceState, ConnectionState
-from sie.head_node.models.instance import WorkerConnection, Instance
+from sie.head_node.core.instance import WorkerConnection, Instance
 from sie.head_node.core import PoolManager
 
 logger = logging.getLogger(__name__)
@@ -123,6 +123,24 @@ class ConnectionManager:
             await self.send_to_worker(worker_id, msg.dict())
             logger.info(f"Assigned instance {instance_id} to worker {worker_id}")
             return instance_id
+        return None
+
+    async def assign_spot_instance(self, worker_id: str, instance_type: str = None) -> str:
+        """Assign a spot instance to a worker (trace-based)"""
+        spot_instance_id = self.pool_manager.assign_spot_instance(worker_id, instance_type)
+        if spot_instance_id:
+            # Get the instance ID that was created
+            instance = self.pool_manager.get_instance_for_worker(worker_id)
+            if instance:
+                # Send assignment message to worker
+                msg = AssignInstanceMessage(
+                    worker_id=worker_id,
+                    instance_id=instance.instance_id,
+                    instance_type=instance.instance_type
+                )
+                await self.send_to_worker(worker_id, msg.dict())
+                logger.info(f"Assigned spot instance {spot_instance_id} (instance {instance.instance_id}) to worker {worker_id}")
+                return spot_instance_id
         return None
         
     async def unassign_instance(self, instance_id: str) -> bool:

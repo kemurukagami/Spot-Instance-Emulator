@@ -105,47 +105,44 @@ class WebSocketClient:
                 self.instance_id = msg.instance_id
                 self.instance_type = msg.instance_type
                 self.connection_state = ConnectionState.ASSIGNED
-                logger.info(f"Assigned instance {msg.instance_id} ({msg.instance_type}) to worker {self.worker_id}")
+                logger.info(f" Worker {self.worker_id} assigned to instance {msg.instance_id} (type: {msg.instance_type})")
         
         elif msg_type == MessageType.INTERRUPT:
             msg = InterruptMessage(**data)
             if msg.instance_id == self.instance_id:
-                logger.warning(f"Received interruption notice for instance {msg.instance_id}: {msg.warning_time}s warning")
+                # Calculate real-time warning based on simulation speed
+                real_warning_time = msg.warning_time / msg.simulation_speed
+
+                if msg.simulation_speed > 1.0:
+                    logger.warning(f" Spot interruption: instance {msg.instance_id} terminating in {real_warning_time:.1f}s real-time ({msg.warning_time}s sim-time at {msg.simulation_speed}x speed)")
+                else:
+                    logger.warning(f" Spot interruption: instance {msg.instance_id} terminating in {msg.warning_time}s")
+
                 self.connection_state = ConnectionState.INTERRUPTED
-                
-                # Call interrupt callback if provided
+
+                # Call interrupt callback if provided (pass real warning time)
                 if self.interrupt_callback:
-                    await self.interrupt_callback(msg.warning_time, msg.reason)
-                    
-                # Schedule unassignment (not termination - worker stays alive)
-                asyncio.create_task(self._schedule_unassignment(msg.warning_time))
+                    await self.interrupt_callback(real_warning_time, msg.reason)
+
+                # Note: Actual unassignment will come via UnassignInstanceMessage from head node
+                # This is just a warning to allow the worker to clean up gracefully
         
         elif msg_type == MessageType.UNASSIGN_INSTANCE:
             msg = UnassignInstanceMessage(**data)
             if msg.instance_id == self.instance_id and msg.worker_id == self.worker_id:
-                logger.info(f"Unassigning instance {self.instance_id} from worker {self.worker_id}")
+                logger.info(f" Instance {self.instance_id} unassigned from worker {self.worker_id}")
+                old_instance_id = self.instance_id
                 self.instance_id = None
                 self.instance_type = None
                 self.connection_state = ConnectionState.UNASSIGNED
+
+                # Notify application that instance is terminated (but worker continues)
+                if self.termination_callback:
+                    await self.termination_callback()
             
         elif msg_type == MessageType.ACKNOWLEDGE:
             msg = AcknowledgeMessage(**data)
             logger.debug(f"Received acknowledgment for {msg.original_message_type}")
-            
-    async def _schedule_unassignment(self, warning_time: int):
-        """Schedule instance unassignment after warning time"""
-        await asyncio.sleep(warning_time)
-        logger.info(f"Unassigning instance {self.instance_id} from worker {self.worker_id} after {warning_time}s warning")
-        
-        # Clear instance assignment but keep worker connection alive
-        old_instance_id = self.instance_id
-        self.instance_id = None
-        self.instance_type = None
-        self.connection_state = ConnectionState.UNASSIGNED
-        
-        # Notify application that instance is terminated (but worker continues)
-        if self.termination_callback:
-            await self.termination_callback()
             
     async def _reconnect(self):
         """Reconnect to head node"""

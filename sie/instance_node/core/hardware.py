@@ -4,7 +4,7 @@ import subprocess
 import socket
 import hashlib
 from typing import List, Optional
-from sie.instance_node.models import HardwareProfile, CPUInfo, GPUInfo
+from sie.instance_node.core.hardware_schema import HardwareProfile, CPUInfo, GPUInfo
 import logging
 
 logger = logging.getLogger(__name__)

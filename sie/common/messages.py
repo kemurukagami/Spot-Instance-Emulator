@@ -22,8 +22,9 @@ class HeartbeatMessage(BaseMessage):
 class InterruptMessage(BaseMessage):
     type: MessageType = MessageType.INTERRUPT
     instance_id: str
-    warning_time: int = 120  # seconds
+    warning_time: int = 120  # seconds (in simulation time)
     reason: str = "spot-interruption"
+    simulation_speed: float = 1.0  # Simulation speed multiplier
     
 class AcknowledgeMessage(BaseMessage):
     type: MessageType = MessageType.ACKNOWLEDGE

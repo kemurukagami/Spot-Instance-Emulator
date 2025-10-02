@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timedelta
 from sie.head_node.core import PoolManager
-from sie.head_node.models import Instance
+from sie.head_node.core.instance import Instance
 from sie.common.constants import InstanceState, HEARTBEAT_TIMEOUT
 
 
