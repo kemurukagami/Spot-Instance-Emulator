@@ -66,31 +66,32 @@ async def shutdown_callback():
     logger.info("Worker process terminated due to head node disconnection")
     os._exit(0)
 
-async def start_websocket_client(head_node_url: str, worker_id: str):
+async def start_websocket_client(head_node_url: str, worker_id: str, instance_type: str):
     """Start WebSocket connection to head node"""
     global ws_client
-    
+
     # Detect hardware
     hardware_detector = HardwareDetector()
     hardware_profile = hardware_detector.detect_hardware()
-    
+
     # Update status to worker-based (no instance assigned initially)
     status.instance_id = None  # Will be assigned by head node
     status.instance_type = None
     status.worker_id = worker_id
     status.hardware = hardware_profile.dict()
     status.state = "unassigned"
-    
+
     # Create and start WebSocket client
     ws_client = WebSocketClient(
         worker_id=worker_id,
         hardware_profile=hardware_profile.dict(),
+        instance_type=instance_type,
         head_node_url=head_node_url,
         interrupt_callback=interrupt_callback,
         termination_callback=termination_callback,
         shutdown_callback=shutdown_callback
     )
-    
+
     await ws_client.connect()
 
 @app.on_event("startup")
@@ -98,23 +99,34 @@ async def startup_event():
     """Start WebSocket client on app startup"""
     # Get configuration from environment or defaults
     head_node_url = os.getenv("HEAD_NODE_URL", "ws://localhost:8000/ws")
-    
+
     # Generate worker ID from machine characteristics
     hardware_detector = HardwareDetector()
     worker_id = hardware_detector.generate_worker_id()
-    
+
+    # Auto-detect instance type from hardware (or use override from env)
+    instance_type_override = os.getenv("INSTANCE_TYPE")
+    if instance_type_override:
+        instance_type = instance_type_override
+        logger.info(f"Using instance type override: {instance_type}")
+    else:
+        # Auto-detect from hardware
+        hardware_profile = hardware_detector.detect_hardware()
+        instance_type = hardware_detector.infer_instance_type(hardware_profile)
+        logger.info(f"Auto-detected instance type: {instance_type}")
+
     # Configure webhook if provided
     webhook_url = os.getenv("WEBHOOK_URL")
     if webhook_url:
         webhook_config.url = webhook_url
         webhook_config.enabled = True
         logger.info(f"Webhook configured: {webhook_url}")
-    
-    logger.info(f"Starting worker node: {worker_id}")
+
+    logger.info(f"Starting worker node: {worker_id} ({instance_type})")
     logger.info(f"Connecting to head node: {head_node_url}")
-    
+
     # Start WebSocket client in background
-    asyncio.create_task(start_websocket_client(head_node_url, worker_id))
+    asyncio.create_task(start_websocket_client(head_node_url, worker_id, instance_type))
 
 @app.on_event("shutdown")
 async def shutdown_event():

@@ -74,17 +74,18 @@ class ConnectionManager:
                 worker = WorkerConnection(
                     worker_id=msg.worker_id,
                     hardware=msg.hardware,
+                    instance_type=msg.instance_type,
                     connection_state=ConnectionState.UNASSIGNED
                 )
                 self.pool_manager.register_worker(worker, connection_id)
-                
+
                 # Send acknowledgment
                 ack = AcknowledgeMessage(
                     instance_id="N/A",  # No instance assigned yet
                     original_message_type=MessageType.REGISTER
                 )
                 await self.send_message(connection_id, ack.dict())
-                logger.info(f"Registered worker: {msg.worker_id}")
+                logger.info(f"Registered worker: {msg.worker_id} ({msg.instance_type})")
                 
             elif msg_type == MessageType.HEARTBEAT:
                 msg = HeartbeatMessage(**data)

@@ -11,6 +11,7 @@ class RegisterMessage(BaseMessage):
     type: MessageType = MessageType.REGISTER
     worker_id: str  # Physical machine identifier
     hardware: Dict[str, Any]
+    instance_type: str  # Inferred from hardware (e.g., p3.xlarge, m5.large)
     instance_id: Optional[str] = None  # Will be None for unassigned workers
     
 class HeartbeatMessage(BaseMessage):

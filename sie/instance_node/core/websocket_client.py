@@ -13,12 +13,13 @@ from sie.common.constants import MessageType, InstanceState, ConnectionState, HE
 logger = logging.getLogger(__name__)
 
 class WebSocketClient:
-    def __init__(self, worker_id: str, hardware_profile: dict, 
+    def __init__(self, worker_id: str, hardware_profile: dict, instance_type: str,
                  head_node_url: str, interrupt_callback: Optional[Callable] = None,
                  termination_callback: Optional[Callable] = None,
                  shutdown_callback: Optional[Callable] = None):
         self.worker_id = worker_id
         self.hardware_profile = hardware_profile
+        self.native_instance_type = instance_type  # Hardware-based instance type
         self.head_node_url = head_node_url
         self.interrupt_callback = interrupt_callback
         self.termination_callback = termination_callback  # For instance unassignment
@@ -26,7 +27,7 @@ class WebSocketClient:
         self.websocket = None
         self.connection_state = ConnectionState.UNASSIGNED
         self.instance_id: Optional[str] = None  # Will be assigned by head node
-        self.instance_type: Optional[str] = None
+        self.instance_type: Optional[str] = None  # Assigned spot instance type
         self.running = False
         
     async def connect(self):
@@ -53,10 +54,11 @@ class WebSocketClient:
         msg = RegisterMessage(
             worker_id=self.worker_id,
             hardware=self.hardware_profile,
+            instance_type=self.native_instance_type,
             instance_id=self.instance_id  # Will be None initially
         )
         await self.websocket.send(json.dumps(msg.dict(), default=str))
-        logger.info(f"Registered worker: {self.worker_id} in {self.connection_state.value} state")
+        logger.info(f"Registered worker: {self.worker_id} ({self.native_instance_type}) in {self.connection_state.value} state")
         
     async def _heartbeat_loop(self):
         """Send periodic heartbeats"""

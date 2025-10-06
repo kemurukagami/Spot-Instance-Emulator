@@ -7,6 +7,7 @@ class WorkerConnection(BaseModel):
     """Represents a physical machine connected to the head node"""
     worker_id: str
     hardware: Dict[str, Any]
+    instance_type: str  # Hardware-based instance type (e.g., p3.xlarge, m5.large)
     connection_state: ConnectionState = ConnectionState.UNASSIGNED
     connected_at: datetime = Field(default_factory=datetime.utcnow)
     last_heartbeat: datetime = Field(default_factory=datetime.utcnow)
