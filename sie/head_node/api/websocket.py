@@ -75,6 +75,7 @@ class ConnectionManager:
                     worker_id=msg.worker_id,
                     hardware=msg.hardware,
                     instance_type=msg.instance_type,
+                    ip_address=msg.ip_address,
                     connection_state=ConnectionState.UNASSIGNED
                 )
                 self.pool_manager.register_worker(worker, connection_id)
@@ -85,7 +86,7 @@ class ConnectionManager:
                     original_message_type=MessageType.REGISTER
                 )
                 await self.send_message(connection_id, ack.dict())
-                logger.info(f"Registered worker: {msg.worker_id} ({msg.instance_type})")
+                logger.info(f"Registered worker: {msg.worker_id} ({msg.instance_type}) at {msg.ip_address}")
                 
             elif msg_type == MessageType.HEARTBEAT:
                 msg = HeartbeatMessage(**data)
@@ -126,9 +127,9 @@ class ConnectionManager:
             return instance_id
         return None
 
-    async def assign_spot_instance(self, worker_id: str, instance_type: str = None) -> str:
+    async def assign_spot_instance(self, worker_id: str, instance_type: str = None, spot_instance_id: str = None) -> str:
         """Assign a spot instance to a worker (trace-based)"""
-        spot_instance_id = self.pool_manager.assign_spot_instance(worker_id, instance_type)
+        spot_instance_id = self.pool_manager.assign_spot_instance(worker_id, instance_type, spot_instance_id)
         if spot_instance_id:
             # Get the instance ID that was created
             instance = self.pool_manager.get_instance_for_worker(worker_id)
@@ -143,7 +144,22 @@ class ConnectionManager:
                 logger.info(f"Assigned spot instance {spot_instance_id} (instance {instance.instance_id}) to worker {worker_id}")
                 return spot_instance_id
         return None
-        
+
+    async def request_spot_instance_for_user(self, instance_type: str):
+        """Request a spot instance for a user (auto-selects worker)"""
+        result = self.pool_manager.request_spot_instance_for_user(instance_type)
+        if result:
+            # Send assignment message to the selected worker
+            msg = AssignInstanceMessage(
+                worker_id=result["worker_id"],
+                instance_id=result["instance_id"],
+                instance_type=instance_type
+            )
+            await self.send_to_worker(result["worker_id"], msg.dict())
+            logger.info(f"Allocated {instance_type} spot instance at {result['ip_address']}")
+            return result
+        return None
+
     async def unassign_instance(self, instance_id: str) -> bool:
         """Unassign an instance and return worker to unassigned state"""
         instance = self.pool_manager.get_instance(instance_id)

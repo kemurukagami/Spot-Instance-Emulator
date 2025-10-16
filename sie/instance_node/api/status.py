@@ -1,6 +1,7 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from typing import Dict, Any, Optional
 from datetime import datetime
+from pydantic import BaseModel
 from sie.common.constants import InstanceState
 
 router = APIRouter(prefix="/instance", tags=["instance"])
@@ -12,7 +13,7 @@ class InstanceStatus:
     state: str = "unassigned"  # unassigned, assigned, interrupted
     hardware: dict = {}
     interruption_time: Optional[datetime] = None
-    
+
 status = InstanceStatus()
 
 @router.get("/status")

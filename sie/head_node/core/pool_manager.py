@@ -228,13 +228,14 @@ class PoolManager:
 
         return unassigned_worker
 
-    def assign_spot_instance(self, worker_id: str, instance_type: Optional[str] = None) -> Optional[str]:
+    def assign_spot_instance(self, worker_id: str, instance_type: Optional[str] = None, spot_instance_id: Optional[str] = None) -> Optional[str]:
         """
         Assign an available spot instance to a worker
 
         Args:
             worker_id: ID of the worker to assign to
             instance_type: Preferred instance type (if None, assigns any available)
+            spot_instance_id: Specific spot instance ID to assign (for testing, e.g., "node1")
 
         Returns:
             The assigned spot instance ID, or None if assignment failed
@@ -252,21 +253,41 @@ class PoolManager:
             logger.error(f"Cannot assign spot instance: worker {worker_id} is not unassigned (state: {worker.connection_state})")
             return None
 
-        # Find available spot instance
-        available_spots = self.trace_simulator.get_unassigned_spot_instances()
-        if instance_type:
-            available_spots = [s for s in available_spots if s.instance_type == instance_type]
+        # If specific spot_instance_id is provided, assign that one
+        if spot_instance_id:
+            spot_instance = self.trace_simulator.available_spot_instances.get(spot_instance_id)
+            if not spot_instance:
+                logger.error(f"Cannot assign spot instance: {spot_instance_id} not found in available instances")
+                return None
+            if spot_instance.is_assigned:
+                logger.error(f"Cannot assign spot instance: {spot_instance_id} is already assigned to worker {spot_instance.assigned_worker_id}")
+                return None
 
-        # Filter out instances with less than 2 minutes remaining
-        MIN_LIFETIME_MS = 120000  # 2 minutes in simulation time
-        available_spots = self._filter_by_remaining_lifetime(available_spots, MIN_LIFETIME_MS)
+            # Check if it has sufficient lifetime
+            MIN_LIFETIME_MS = 120000  # 2 minutes in simulation time
+            filtered = self._filter_by_remaining_lifetime([spot_instance], MIN_LIFETIME_MS)
+            if not filtered:
+                logger.error(f"Cannot assign spot instance: {spot_instance_id} has less than {MIN_LIFETIME_MS/1000}s remaining")
+                return None
 
-        if not available_spots:
-            logger.warning(f"No available spot instances with sufficient lifetime (requested type: {instance_type}, min lifetime: {MIN_LIFETIME_MS/1000}s)")
-            return None
+            # Use the specified spot instance
+            spot_instance = filtered[0]
+        else:
+            # Find available spot instance
+            available_spots = self.trace_simulator.get_unassigned_spot_instances()
+            if instance_type:
+                available_spots = [s for s in available_spots if s.instance_type == instance_type]
 
-        # Randomly assign one of the available spot instances
-        spot_instance = random.choice(available_spots)
+            # Filter out instances with less than 2 minutes remaining
+            MIN_LIFETIME_MS = 120000  # 2 minutes in simulation time
+            available_spots = self._filter_by_remaining_lifetime(available_spots, MIN_LIFETIME_MS)
+
+            if not available_spots:
+                logger.warning(f"No available spot instances with sufficient lifetime (requested type: {instance_type}, min lifetime: {MIN_LIFETIME_MS/1000}s)")
+                return None
+
+            # Randomly assign one of the available spot instances
+            spot_instance = random.choice(available_spots)
         spot_instance.assigned_worker_id = worker_id
         self.spot_instance_to_worker[spot_instance.spot_instance_id] = worker_id
 
@@ -342,6 +363,53 @@ class PoolManager:
                 logger.debug(f"Spot instance {spot.spot_instance_id} only has {remaining_lifetime/1000:.1f}s remaining (filtering out, min required: {min_lifetime_ms/1000:.1f}s)")
 
         return filtered
+
+    def request_spot_instance_for_user(self, instance_type: str) -> Optional[Dict[str, str]]:
+        """
+        Request a spot instance (user-friendly API) - auto-selects an available worker
+
+        Args:
+            instance_type: Desired instance type (e.g., "p3.xlarge")
+
+        Returns:
+            Dict with instance_id, spot_instance_id, worker_id, and ip_address, or None if failed
+        """
+        if self.trace_simulator is None:
+            logger.error("Cannot request spot instance: trace simulation not enabled")
+            return None
+
+        # Find an unassigned worker matching the instance type
+        unassigned_workers = self.get_unassigned_workers()
+        matching_workers = [w for w in unassigned_workers if w.instance_type == instance_type]
+
+        if not matching_workers:
+            logger.warning(f"No unassigned workers with instance type {instance_type}")
+            return None
+
+        # Pick first matching worker (could randomize if desired)
+        worker = matching_workers[0]
+        worker_id = worker.worker_id
+
+        # Assign a spot instance to this worker
+        spot_instance_id = self.assign_spot_instance(worker_id, instance_type)
+        if not spot_instance_id:
+            logger.error(f"Failed to assign spot instance to worker {worker_id}")
+            return None
+
+        # Get the instance that was created (user defaults to "isaacy" in Instance model)
+        instance = self.get_instance_for_worker(worker_id)
+        if not instance:
+            logger.error(f"Instance not found after assignment for worker {worker_id}")
+            return None
+
+        logger.info(f"Allocated {instance_type} spot instance {spot_instance_id} to user {instance.user} at {worker.ip_address}")
+
+        return {
+            "instance_id": instance.instance_id,
+            "spot_instance_id": spot_instance_id,
+            "worker_id": worker_id,
+            "ip_address": worker.ip_address
+        }
 
     def _unassign_spot_instance_from_worker(self, spot_instance_id: str, worker_id: str) -> bool:
         """Internal method to unassign a spot instance from a worker"""

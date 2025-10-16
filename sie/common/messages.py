@@ -12,6 +12,7 @@ class RegisterMessage(BaseMessage):
     worker_id: str  # Physical machine identifier
     hardware: Dict[str, Any]
     instance_type: str  # Inferred from hardware (e.g., p3.xlarge, m5.large)
+    ip_address: str  # IP address of the worker machine
     instance_id: Optional[str] = None  # Will be None for unassigned workers
     
 class HeartbeatMessage(BaseMessage):

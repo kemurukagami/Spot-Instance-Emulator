@@ -218,3 +218,37 @@ class HardwareDetector:
                 return 't3.large'
             else:
                 return 't2.micro'
+
+    @staticmethod
+    def get_ip_address() -> str:
+        """
+        Get the primary IP address of this machine.
+        Tries to get the externally-reachable IP address.
+        """
+        try:
+            # Try to get IP by connecting to external host (doesn't actually send data)
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.settimeout(0.1)
+            try:
+                # Connect to Google DNS (doesn't send data, just determines routing)
+                s.connect(('8.8.8.8', 80))
+                ip_address = s.getsockname()[0]
+                s.close()
+                return ip_address
+            except Exception:
+                s.close()
+        except Exception:
+            pass
+
+        # Fallback: get hostname IP
+        try:
+            hostname = socket.gethostname()
+            ip_address = socket.gethostbyname(hostname)
+            if ip_address and ip_address != '127.0.0.1':
+                return ip_address
+        except Exception:
+            pass
+
+        # Last resort: return localhost
+        logger.warning("Could not determine IP address, using localhost")
+        return '127.0.0.1'

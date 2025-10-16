@@ -35,24 +35,24 @@ async def root():
 async def interrupt_callback(warning_time: int, reason: str):
     """Handle interruption notification"""
     logger.warning(f"Interruption callback triggered: {warning_time}s warning")
-    
+
     # Update status
     status.state = "interrupted"
     status.interruption_time = datetime.utcnow() + timedelta(seconds=warning_time)
-    
+
     # Send webhook notification
     await send_interruption_notice(status.instance_id, warning_time, reason)
 
 async def termination_callback():
     """Handle instance unassignment (worker stays alive)"""
     logger.info("Instance unassignment callback triggered - clearing instance assignment")
-    
+
     # Update status to reflect instance termination but worker continues
     status.instance_id = None
     status.instance_type = None
     status.state = "unassigned"
     status.interruption_time = None
-    
+
     logger.info("Worker returned to unassigned state, ready for new instance assignment")
 
 async def shutdown_callback():
@@ -66,7 +66,7 @@ async def shutdown_callback():
     logger.info("Worker process terminated due to head node disconnection")
     os._exit(0)
 
-async def start_websocket_client(head_node_url: str, worker_id: str, instance_type: str):
+async def start_websocket_client(head_node_url: str, worker_id: str, instance_type: str, ip_address: str):
     """Start WebSocket connection to head node"""
     global ws_client
 
@@ -86,6 +86,7 @@ async def start_websocket_client(head_node_url: str, worker_id: str, instance_ty
         worker_id=worker_id,
         hardware_profile=hardware_profile.dict(),
         instance_type=instance_type,
+        ip_address=ip_address,
         head_node_url=head_node_url,
         interrupt_callback=interrupt_callback,
         termination_callback=termination_callback,
@@ -115,6 +116,10 @@ async def startup_event():
         instance_type = hardware_detector.infer_instance_type(hardware_profile)
         logger.info(f"Auto-detected instance type: {instance_type}")
 
+    # Get IP address
+    ip_address = hardware_detector.get_ip_address()
+    logger.info(f"Worker IP address: {ip_address}")
+
     # Configure webhook if provided
     webhook_url = os.getenv("WEBHOOK_URL")
     if webhook_url:
@@ -122,11 +127,11 @@ async def startup_event():
         webhook_config.enabled = True
         logger.info(f"Webhook configured: {webhook_url}")
 
-    logger.info(f"Starting worker node: {worker_id} ({instance_type})")
+    logger.info(f"Starting worker node: {worker_id} ({instance_type}) at {ip_address}")
     logger.info(f"Connecting to head node: {head_node_url}")
 
     # Start WebSocket client in background
-    asyncio.create_task(start_websocket_client(head_node_url, worker_id, instance_type))
+    asyncio.create_task(start_websocket_client(head_node_url, worker_id, instance_type, ip_address))
 
 @app.on_event("shutdown")
 async def shutdown_event():

@@ -9,13 +9,16 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 class InterruptRequest(BaseModel):
     instance_id: str
     warning_time: int = 120
-    
+
 class AssignInstanceRequest(BaseModel):
     worker_id: str
     instance_type: str = "t2.micro"
-    
+
 class UnassignInstanceRequest(BaseModel):
     instance_id: str
+
+class RequestSpotInstanceRequest(BaseModel):
+    instance_type: str  # e.g., "p3.xlarge"
 
 class Managers:
     pool_manager: PoolManager = None
@@ -259,6 +262,7 @@ async def get_upcoming_trace_events() -> List[Dict[str, Any]]:
 class AssignSpotInstanceRequest(BaseModel):
     worker_id: str
     instance_type: Optional[str] = None
+    spot_instance_id: Optional[str] = None  # For testing: specify exact spot instance (e.g., "node1")
 
 @router.post("/assign-spot-instance")
 async def assign_spot_instance(request: AssignSpotInstanceRequest) -> Dict[str, Any]:
@@ -281,10 +285,14 @@ async def assign_spot_instance(request: AssignSpotInstanceRequest) -> Dict[str, 
     # Use connection_manager to send WebSocket message to worker
     spot_instance_id = await managers.connection_manager.assign_spot_instance(
         request.worker_id,
-        request.instance_type
+        request.instance_type,
+        request.spot_instance_id
     )
     if not spot_instance_id:
-        raise HTTPException(status_code=400, detail="No available spot instances matching criteria")
+        if request.spot_instance_id:
+            raise HTTPException(status_code=400, detail=f"Spot instance {request.spot_instance_id} not available or already assigned")
+        else:
+            raise HTTPException(status_code=400, detail="No available spot instances matching criteria")
 
     return {
         "status": "success",
@@ -292,4 +300,27 @@ async def assign_spot_instance(request: AssignSpotInstanceRequest) -> Dict[str, 
         "worker_id": request.worker_id,
         "instance_type": request.instance_type,
         "message": f"Assigned spot instance {spot_instance_id} to worker {request.worker_id}"
+    }
+
+@router.post("/request-spot-instance")
+async def request_spot_instance(request: RequestSpotInstanceRequest) -> Dict[str, Any]:
+    """Request a spot instance (user-friendly API - auto-selects worker)"""
+    if not managers.simulation_controller:
+        raise HTTPException(status_code=400, detail="Trace simulation not enabled")
+
+    # Auto-select worker and assign spot instance (user defaults to "isaacy" in Instance metadata)
+    result = await managers.connection_manager.request_spot_instance_for_user(
+        instance_type=request.instance_type
+    )
+
+    if not result:
+        raise HTTPException(status_code=400, detail=f"No available {request.instance_type} spot instances or workers")
+
+    return {
+        "status": "success",
+        "instance_id": result["instance_id"],
+        "spot_instance_id": result["spot_instance_id"],
+        "ip_address": result["ip_address"],
+        "instance_type": request.instance_type,
+        "message": f"Allocated {request.instance_type} spot instance at {result['ip_address']}"
     }

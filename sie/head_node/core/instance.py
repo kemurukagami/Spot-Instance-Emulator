@@ -8,6 +8,7 @@ class WorkerConnection(BaseModel):
     worker_id: str
     hardware: Dict[str, Any]
     instance_type: str  # Hardware-based instance type (e.g., p3.xlarge, m5.large)
+    ip_address: str  # IP address of the worker machine
     connection_state: ConnectionState = ConnectionState.UNASSIGNED
     connected_at: datetime = Field(default_factory=datetime.utcnow)
     last_heartbeat: datetime = Field(default_factory=datetime.utcnow)
@@ -18,6 +19,7 @@ class Instance(BaseModel):
     instance_id: str
     instance_type: str
     worker_id: str  # Links to WorkerConnection
+    user: str = "isaacy"  # User who requested this spot instance
     state: InstanceState = InstanceState.RUNNING
     assigned_at: datetime = Field(default_factory=datetime.utcnow)
     last_heartbeat: datetime = Field(default_factory=datetime.utcnow)

@@ -14,12 +14,13 @@ logger = logging.getLogger(__name__)
 
 class WebSocketClient:
     def __init__(self, worker_id: str, hardware_profile: dict, instance_type: str,
-                 head_node_url: str, interrupt_callback: Optional[Callable] = None,
+                 ip_address: str, head_node_url: str, interrupt_callback: Optional[Callable] = None,
                  termination_callback: Optional[Callable] = None,
                  shutdown_callback: Optional[Callable] = None):
         self.worker_id = worker_id
         self.hardware_profile = hardware_profile
         self.native_instance_type = instance_type  # Hardware-based instance type
+        self.ip_address = ip_address  # IP address of this worker
         self.head_node_url = head_node_url
         self.interrupt_callback = interrupt_callback
         self.termination_callback = termination_callback  # For instance unassignment
@@ -55,10 +56,11 @@ class WebSocketClient:
             worker_id=self.worker_id,
             hardware=self.hardware_profile,
             instance_type=self.native_instance_type,
+            ip_address=self.ip_address,
             instance_id=self.instance_id  # Will be None initially
         )
         await self.websocket.send(json.dumps(msg.dict(), default=str))
-        logger.info(f"Registered worker: {self.worker_id} ({self.native_instance_type}) in {self.connection_state.value} state")
+        logger.info(f"Registered worker: {self.worker_id} ({self.native_instance_type}) at {self.ip_address} in {self.connection_state.value} state")
         
     async def _heartbeat_loop(self):
         """Send periodic heartbeats"""
