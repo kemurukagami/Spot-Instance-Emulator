@@ -304,7 +304,7 @@ async def assign_spot_instance(request: AssignSpotInstanceRequest) -> Dict[str, 
 
 @router.post("/request-spot-instance")
 async def request_spot_instance(request: RequestSpotInstanceRequest) -> Dict[str, Any]:
-    """Request a spot instance (user-friendly API - auto-selects worker)"""
+    """Request a spot instance (user-friendly API - auto-selects worker and creates Docker container)"""
     if not managers.simulation_controller:
         raise HTTPException(status_code=400, detail="Trace simulation not enabled")
 
@@ -321,6 +321,11 @@ async def request_spot_instance(request: RequestSpotInstanceRequest) -> Dict[str
         "instance_id": result["instance_id"],
         "spot_instance_id": result["spot_instance_id"],
         "ip_address": result["ip_address"],
+        "ssh_port": result["ssh_port"],
+        "ssh_username": result["ssh_username"],
+        "ssh_password": result["ssh_password"],
         "instance_type": request.instance_type,
-        "message": f"Allocated {request.instance_type} spot instance at {result['ip_address']}"
+        "container_name": result["container_name"],
+        "ssh_command": f"ssh -p {result['ssh_port']} {result['ssh_username']}@{result['ip_address']}",
+        "message": f"Allocated {request.instance_type} spot instance container at {result['ip_address']}:{result['ssh_port']}"
     }

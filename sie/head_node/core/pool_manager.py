@@ -3,6 +3,8 @@ from datetime import datetime, timedelta
 import asyncio
 import uuid
 import random
+import secrets
+import string
 from sie.head_node.core.instance import Instance, WorkerConnection
 from sie.head_node.core.trace import TraceSimulator, AvailableSpotInstance
 from sie.common.constants import InstanceState, ConnectionState, HEARTBEAT_TIMEOUT
@@ -24,6 +26,10 @@ class PoolManager:
         # Trace-based spot instance simulation
         self.trace_simulator: Optional[TraceSimulator] = None
         self.spot_instance_to_worker: Dict[str, str] = {}  # spot_instance_id -> worker_id
+
+        # Docker container management
+        self.port_allocations: Dict[str, int] = {}  # worker_id -> next_available_port
+        self.BASE_SSH_PORT = 10000  # Start SSH ports from 10000
         
     # Worker connection management
     def register_worker(self, worker: WorkerConnection, websocket_id: str) -> None:
@@ -366,13 +372,13 @@ class PoolManager:
 
     def request_spot_instance_for_user(self, instance_type: str) -> Optional[Dict[str, str]]:
         """
-        Request a spot instance (user-friendly API) - auto-selects an available worker
+        Request a spot instance (user-friendly API) - auto-selects an available worker and creates Docker container
 
         Args:
             instance_type: Desired instance type (e.g., "p3.xlarge")
 
         Returns:
-            Dict with instance_id, spot_instance_id, worker_id, and ip_address, or None if failed
+            Dict with instance_id, spot_instance_id, worker_id, ip_address, ssh_port, ssh_username, ssh_password, and container_name, or None if failed
         """
         if self.trace_simulator is None:
             logger.error("Cannot request spot instance: trace simulation not enabled")
@@ -402,13 +408,29 @@ class PoolManager:
             logger.error(f"Instance not found after assignment for worker {worker_id}")
             return None
 
-        logger.info(f"Allocated {instance_type} spot instance {spot_instance_id} to user {instance.user} at {worker.ip_address}")
+        # Generate Docker container configuration
+        container_name = f"spot-{instance.instance_id}"
+        ssh_port = self._allocate_ssh_port(worker_id)
+        ssh_password = self._generate_secure_password()
+        base_image = self._get_base_image(instance_type)
+
+        # Update instance with container info
+        instance.container_name = container_name
+        instance.ssh_port = ssh_port
+        instance.ssh_password = ssh_password
+
+        logger.info(f"Allocated {instance_type} spot instance {spot_instance_id} to user {instance.user} at {worker.ip_address}:{ssh_port} (container: {container_name})")
 
         return {
             "instance_id": instance.instance_id,
             "spot_instance_id": spot_instance_id,
             "worker_id": worker_id,
-            "ip_address": worker.ip_address
+            "ip_address": worker.ip_address,
+            "ssh_port": ssh_port,
+            "ssh_username": "root",
+            "ssh_password": ssh_password,
+            "container_name": container_name,
+            "base_image": base_image
         }
 
     def _unassign_spot_instance_from_worker(self, spot_instance_id: str, worker_id: str) -> bool:
@@ -454,3 +476,32 @@ class PoolManager:
         if self.trace_simulator is None:
             return None
         return self.trace_simulator.get_spot_instance_by_worker(worker_id)
+
+    # Docker container helper methods
+    def _allocate_ssh_port(self, worker_id: str) -> int:
+        """Allocate next available SSH port for a worker"""
+        if worker_id not in self.port_allocations:
+            self.port_allocations[worker_id] = self.BASE_SSH_PORT
+
+        port = self.port_allocations[worker_id]
+        self.port_allocations[worker_id] += 1
+        return port
+
+    def _release_ssh_port(self, worker_id: str, port: int):
+        """Release an SSH port (for future optimization)"""
+        # For now, we just increment and don't reuse
+        # Could implement a free list for port reuse
+        pass
+
+    @staticmethod
+    def _generate_secure_password(length: int = 16) -> str:
+        """Generate a secure random password"""
+        alphabet = string.ascii_letters + string.digits
+        return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+    @staticmethod
+    def _get_base_image(instance_type: str) -> str:
+        """Get Docker base image (always minimal base - users install their own CUDA/software)"""
+        # All instance types use the same minimal base image
+        # Users can install their own CUDA, Python, frameworks, etc.
+        return "spot-base:latest"

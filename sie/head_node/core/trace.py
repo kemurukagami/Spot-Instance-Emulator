@@ -36,6 +36,7 @@ class TraceSimulator(BaseModel):
     start_time: datetime = Field(default_factory=datetime.utcnow)
     simulation_speed: float = 1.0  # 1.0 = real-time, 2.0 = 2x speed
     is_paused: bool = False
+    default_instance_type: str = "p3.8xlarge"  # Default instance type for all trace nodes
 
     class Config:
         arbitrary_types_allowed = True

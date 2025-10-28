@@ -20,6 +20,13 @@ class Instance(BaseModel):
     instance_type: str
     worker_id: str  # Links to WorkerConnection
     user: str = "isaacy"  # User who requested this spot instance
+
+    # Docker container fields
+    container_name: Optional[str] = None  # spot-i-abc123
+    ssh_port: Optional[int] = None        # Host port for SSH (e.g., 10001)
+    ssh_username: str = "root"            # Username for SSH
+    ssh_password: Optional[str] = None    # Generated password
+
     state: InstanceState = InstanceState.RUNNING
     assigned_at: datetime = Field(default_factory=datetime.utcnow)
     last_heartbeat: datetime = Field(default_factory=datetime.utcnow)

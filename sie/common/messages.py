@@ -49,3 +49,31 @@ class UnassignInstanceMessage(BaseMessage):
     type: MessageType = MessageType.UNASSIGN_INSTANCE
     instance_id: str
     worker_id: str
+
+# Docker container messages
+class CreateContainerMessage(BaseMessage):
+    """Head node → Worker: Create Docker container for spot instance"""
+    type: MessageType = MessageType.CREATE_CONTAINER
+    container_name: str          # spot-i-abc123
+    ssh_port: int                # Host port (e.g., 10001)
+    ssh_password: str            # Generated password
+    instance_type: str           # For resource limits
+    base_image: str = "spot-base:latest"  # Docker image to use
+
+class ContainerCreatedMessage(BaseMessage):
+    """Worker → Head node: Container created successfully"""
+    type: MessageType = MessageType.CONTAINER_CREATED
+    container_name: str
+    success: bool
+    error: Optional[str] = None
+
+class StopContainerMessage(BaseMessage):
+    """Head node → Worker: Stop container (on interruption)"""
+    type: MessageType = MessageType.STOP_CONTAINER
+    container_name: str
+    signal: str = "SIGTERM"
+
+class RemoveContainerMessage(BaseMessage):
+    """Head node → Worker: Remove container (on unassignment)"""
+    type: MessageType = MessageType.REMOVE_CONTAINER
+    container_name: str

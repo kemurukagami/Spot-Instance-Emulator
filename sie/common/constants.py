@@ -23,6 +23,11 @@ class MessageType(str, Enum):
     ASSIGN_INSTANCE = "assign_instance"
     UNASSIGN_INSTANCE = "unassign_instance"
     ERROR = "error"
+    # Docker container messages
+    CREATE_CONTAINER = "create_container"
+    CONTAINER_CREATED = "container_created"
+    STOP_CONTAINER = "stop_container"
+    REMOVE_CONTAINER = "remove_container"
 
 DEFAULT_WARNING_TIME = 120  # seconds (2 minutes)
 HEARTBEAT_INTERVAL = 30  # seconds

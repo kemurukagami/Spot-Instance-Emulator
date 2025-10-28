@@ -6,8 +6,9 @@ from typing import Dict
 from datetime import datetime
 import logging
 from sie.common.messages import (
-    RegisterMessage, HeartbeatMessage, InterruptMessage, 
-    AcknowledgeMessage, StatusMessage, AssignInstanceMessage, UnassignInstanceMessage
+    RegisterMessage, HeartbeatMessage, InterruptMessage,
+    AcknowledgeMessage, StatusMessage, AssignInstanceMessage, UnassignInstanceMessage,
+    CreateContainerMessage, StopContainerMessage, RemoveContainerMessage
 )
 from sie.common.constants import MessageType, InstanceState, ConnectionState
 from sie.head_node.core.instance import WorkerConnection, Instance
@@ -146,7 +147,7 @@ class ConnectionManager:
         return None
 
     async def request_spot_instance_for_user(self, instance_type: str):
-        """Request a spot instance for a user (auto-selects worker)"""
+        """Request a spot instance for a user (auto-selects worker and creates Docker container)"""
         result = self.pool_manager.request_spot_instance_for_user(instance_type)
         if result:
             # Send assignment message to the selected worker
@@ -156,7 +157,18 @@ class ConnectionManager:
                 instance_type=instance_type
             )
             await self.send_to_worker(result["worker_id"], msg.dict())
-            logger.info(f"Allocated {instance_type} spot instance at {result['ip_address']}")
+
+            # Send container creation message to the worker
+            container_msg = CreateContainerMessage(
+                container_name=result["container_name"],
+                ssh_port=result["ssh_port"],
+                ssh_password=result["ssh_password"],
+                instance_type=instance_type,
+                base_image=result["base_image"]
+            )
+            await self.send_to_worker(result["worker_id"], container_msg.dict())
+
+            logger.info(f"Allocated {instance_type} spot instance at {result['ip_address']}:{result['ssh_port']} (container: {result['container_name']})")
             return result
         return None
 
@@ -165,8 +177,10 @@ class ConnectionManager:
         instance = self.pool_manager.get_instance(instance_id)
         if not instance:
             return False
-            
+
         worker_id = instance.worker_id
+        container_name = instance.container_name
+
         success = self.pool_manager.unassign_instance(instance_id)
         if success:
             # Send unassignment message to worker
@@ -175,12 +189,25 @@ class ConnectionManager:
                 worker_id=worker_id
             )
             await self.send_to_worker(worker_id, msg.dict())
+
+            # Send container removal message if container exists
+            if container_name:
+                remove_msg = RemoveContainerMessage(
+                    container_name=container_name
+                )
+                await self.send_to_worker(worker_id, remove_msg.dict())
+                logger.info(f"Sent container removal for {container_name}")
+
             logger.info(f"Unassigned instance {instance_id} from worker {worker_id}")
             return True
         return False
         
     async def trigger_interruption(self, instance_id: str, warning_time: int = 120):
-        """Send interruption message to instance"""
+        """Send interruption message to instance and stop container"""
+        instance = self.pool_manager.get_instance(instance_id)
+        if not instance:
+            return False
+
         success = self.pool_manager.mark_for_interruption(instance_id, warning_time)
         if success:
             msg = InterruptMessage(
@@ -188,8 +215,18 @@ class ConnectionManager:
                 warning_time=warning_time
             )
             await self.send_to_instance(instance_id, msg.dict())
+
+            # Send container stop message if container exists
+            if instance.container_name:
+                stop_msg = StopContainerMessage(
+                    container_name=instance.container_name,
+                    signal="SIGTERM"
+                )
+                await self.send_to_worker(instance.worker_id, stop_msg.dict())
+                logger.info(f"Sent SIGTERM to container {instance.container_name}")
+
             logger.info(f"Sent interruption to instance: {instance_id}")
-            
+
             # Schedule automatic unassignment after warning time
             asyncio.create_task(self._schedule_unassignment(instance_id, warning_time))
             return True

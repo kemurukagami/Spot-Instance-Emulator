@@ -10,6 +10,11 @@ class InstanceStatus:
     worker_id: str = None  # Physical machine identifier
     instance_id: str = None  # Will be None when unassigned
     instance_type: str = None
+
+    # Docker container fields
+    container_name: Optional[str] = None
+    ssh_port: Optional[int] = None
+
     state: str = "unassigned"  # unassigned, assigned, interrupted
     hardware: dict = {}
     interruption_time: Optional[datetime] = None

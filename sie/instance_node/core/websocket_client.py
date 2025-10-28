@@ -6,9 +6,11 @@ from typing import Optional, Callable
 from datetime import datetime
 from sie.common.messages import (
     RegisterMessage, HeartbeatMessage, InterruptMessage,
-    AcknowledgeMessage, StatusMessage, AssignInstanceMessage, UnassignInstanceMessage
+    AcknowledgeMessage, StatusMessage, AssignInstanceMessage, UnassignInstanceMessage,
+    CreateContainerMessage, ContainerCreatedMessage, StopContainerMessage, RemoveContainerMessage
 )
 from sie.common.constants import MessageType, InstanceState, ConnectionState, HEARTBEAT_INTERVAL
+from sie.instance_node.core.container_manager import ContainerManager
 
 logger = logging.getLogger(__name__)
 
@@ -143,11 +145,77 @@ class WebSocketClient:
                 # Notify application that instance is terminated (but worker continues)
                 if self.termination_callback:
                     await self.termination_callback()
-            
+
+        # Docker container messages
+        elif msg_type == MessageType.CREATE_CONTAINER:
+            msg = CreateContainerMessage(**data)
+            await self._handle_create_container(msg)
+
+        elif msg_type == MessageType.STOP_CONTAINER:
+            msg = StopContainerMessage(**data)
+            await self._handle_stop_container(msg)
+
+        elif msg_type == MessageType.REMOVE_CONTAINER:
+            msg = RemoveContainerMessage(**data)
+            await self._handle_remove_container(msg)
+
         elif msg_type == MessageType.ACKNOWLEDGE:
             msg = AcknowledgeMessage(**data)
             logger.debug(f"Received acknowledgment for {msg.original_message_type}")
-            
+
+    async def _handle_create_container(self, msg: CreateContainerMessage):
+        """Handle container creation request from head node"""
+        logger.info(f"Creating container {msg.container_name} on port {msg.ssh_port}")
+
+        # Determine if GPU should be enabled (based on instance type)
+        gpu_enabled = any(msg.instance_type.startswith(prefix) for prefix in ["p2", "p3", "p4", "g4", "g5"])
+
+        # Create container (runs synchronously, but that's okay for now)
+        success = ContainerManager.create_container(
+            container_name=msg.container_name,
+            ssh_port=msg.ssh_port,
+            password=msg.ssh_password,
+            instance_type=msg.instance_type,
+            gpu_enabled=gpu_enabled,
+            base_image=msg.base_image
+        )
+
+        # Update local status
+        if success:
+            from sie.instance_node.api.status import status
+            status.container_name = msg.container_name
+            status.ssh_port = msg.ssh_port
+            logger.info(f"Successfully created container {msg.container_name}")
+        else:
+            logger.error(f"Failed to create container {msg.container_name}")
+
+        # Send confirmation to head node
+        response = ContainerCreatedMessage(
+            container_name=msg.container_name,
+            success=success,
+            error=None if success else "Container creation failed"
+        )
+        await self.websocket.send(json.dumps(response.dict(), default=str))
+
+    async def _handle_stop_container(self, msg: StopContainerMessage):
+        """Handle container stop request (interruption)"""
+        logger.info(f"Stopping container {msg.container_name} with signal {msg.signal}")
+
+        ContainerManager.stop_container(msg.container_name, msg.signal)
+
+    async def _handle_remove_container(self, msg: RemoveContainerMessage):
+        """Handle container removal request (unassignment)"""
+        logger.info(f"Removing container {msg.container_name}")
+
+        ContainerManager.remove_container(msg.container_name, force=True)
+
+        # Clear local status
+        from sie.instance_node.api.status import status
+        status.container_name = None
+        status.ssh_port = None
+
+        logger.info(f"Container {msg.container_name} removed, worker ready for new assignment")
+
     async def _reconnect(self):
         """Reconnect to head node"""
         while not self.websocket or self.websocket.closed:

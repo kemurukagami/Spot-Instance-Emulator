@@ -255,21 +255,12 @@ class SimulationController:
 
     def _infer_instance_type(self, node_id: str) -> str:
         """
-        Infer instance type from node ID
-        This is a simple implementation - could be enhanced with mapping files
+        Get instance type for a node - uses the configured default instance type
+        from the trace simulator (set via --instance-type or defaults)
         """
-        # Try to extract from node ID pattern
-        if 'p3' in node_id.lower():
-            return 'p3.xlarge'
-        elif 'g4dn' in node_id.lower():
-            return 'g4dn.xlarge'
-        elif 'c5' in node_id.lower():
-            return 'c5.xlarge'
-        elif 'm5' in node_id.lower():
-            return 'm5.xlarge'
-        else:
-            # Default based on some heuristic or configuration
-            return 'p3.xlarge'
+        # Use the configured default instance type from trace simulator
+        # This respects the --instance-type override from command line
+        return self.trace_simulator.default_instance_type
 
     def get_simulation_status(self) -> dict:
         """Get current simulation status"""

@@ -14,7 +14,7 @@ class TraceParser:
     """Parser for CSV trace files"""
 
     @staticmethod
-    def parse_trace_file(file_path: str, instance_type: str = "p3.xlarge") -> TraceSimulator:
+    def parse_trace_file(file_path: str, instance_type: str = "p3.8xlarge") -> TraceSimulator:
         """
         Parse a CSV trace file and return a TraceSimulator
 
@@ -55,8 +55,8 @@ class TraceParser:
         # Sort events by timestamp for efficient playback
         events.sort()
 
-        # Create simulator with parsed events
-        simulator = TraceSimulator(events=events)
+        # Create simulator with parsed events and configured instance type
+        simulator = TraceSimulator(events=events, default_instance_type=instance_type)
 
         logger.info(f"Parsed trace file: {file_path}")
         logger.info(f"  Events: {len(events)}")
@@ -146,7 +146,7 @@ def parse_instance_type_from_filename(file_path: str) -> str:
 
     # Common instance type patterns
     if filename.startswith("p3"):
-        return "p3.xlarge"
+        return "p3.8xlarge"  # Default to 4-GPU configuration
     elif filename.startswith("g4dn"):
         return "g4dn.xlarge"
     elif filename.startswith("c5"):
